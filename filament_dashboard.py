@@ -251,11 +251,18 @@ with st.sidebar:
     st.divider()
     st.caption('Aggiornamenti GitHub')
     st.caption('Controllo automatico all’apertura. Le modifiche locali bloccano il pull per proteggere i dati.')
-    if st.button('Accedi a GitHub', icon=':material/login:', key='login_github', width='stretch',
-                 help='Apre GitHub nel browser e salva l’accesso in modo sicuro su questo computer.'):
+    login_windows, login_mac = st.columns(2)
+    login_system = None
+    if login_windows.button('GitHub · Windows', icon=':material/login:', key='login_github_windows',
+                            width='stretch', help='Accesso tramite Gestore credenziali di Windows.'):
+        login_system = 'windows'
+    if login_mac.button('GitHub · Mac', icon=':material/login:', key='login_github_macos',
+                        width='stretch', help='Accesso tramite Git Credential Manager e Portachiavi di macOS.'):
+        login_system = 'macos'
+    if login_system:
         with st.spinner('Completa l’accesso nella finestra del browser…'):
             try:
-                auth_message = authenticate_github()
+                auth_message = authenticate_github(system=login_system)
             except (SyncError, OSError) as exc:
                 st.session_state['auth_result'] = ('error', str(exc))
             else:

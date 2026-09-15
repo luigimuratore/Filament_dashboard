@@ -1,4 +1,5 @@
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -82,6 +83,11 @@ class SyncTests(unittest.TestCase):
              patch('filament_sync.subprocess.run', return_value=missing):
             with self.assertRaisesRegex(SyncError, 'Credential Manager'):
                 authenticate_github(self.root)
+
+    def test_github_login_rejects_wrong_platform_button(self):
+        wrong_system = 'windows' if sys.platform == 'darwin' else 'macos'
+        with self.assertRaisesRegex(SyncError, 'relativo pulsante'):
+            authenticate_github(self.root, system=wrong_system)
 
     def remote_update(self):
         other = self.base / 'other'

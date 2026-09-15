@@ -4,6 +4,7 @@ from pathlib import Path
 from filament_lock import file_lock
 import os
 import subprocess
+import sys
 
 BASE = Path(__file__).resolve().parent
 PROJECT_FILES = [
@@ -45,9 +46,16 @@ def git(root, *args):
     return result.stdout.strip()
 
 
-def authenticate_github(root=BASE):
+def authenticate_github(root=BASE, system=None):
     """Open Git Credential Manager's browser login and verify the saved credential."""
     root = Path(root)
+    current_system = 'windows' if os.name == 'nt' else ('macos' if sys.platform == 'darwin' else 'other')
+    requested_system = system or current_system
+    if requested_system not in ('windows', 'macos'):
+        raise SyncError('Il login guidato è disponibile su Windows e macOS.')
+    if requested_system != current_system:
+        label = 'Windows' if current_system == 'windows' else 'macOS'
+        raise SyncError(f'Questo computer usa {label}: scegli il relativo pulsante di accesso.')
     remote = git(root, 'remote', 'get-url', 'origin')
     if not remote.lower().startswith('https://github.com/'):
         raise SyncError('Il login guidato è disponibile per repository GitHub collegate tramite HTTPS.')
@@ -59,9 +67,14 @@ def authenticate_github(root=BASE):
             capture_output=True, text=True, timeout=15,
         )
         if available.returncode:
+            if current_system == 'windows':
+                raise SyncError(
+                    'Git Credential Manager non è disponibile. Installa o aggiorna Git for Windows, '
+                    'riapri la dashboard e riprova.'
+                )
             raise SyncError(
-                'Git Credential Manager non è disponibile. Installa o aggiorna Git for Windows, '
-                'riapri la dashboard e riprova.'
+                'Git Credential Manager non è disponibile. Da Terminale esegui '
+                '“brew install --cask git-credential-manager”, riapri la dashboard e riprova.'
             )
         subprocess.run(
             ['git', 'credential-manager', 'configure'], cwd=root, env=env,

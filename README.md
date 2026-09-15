@@ -15,7 +15,7 @@ Il launcher controlla Python (3.11 o successivo), crea l'ambiente virtuale local
 
 **macOS:** Python e Git mancanti vengono installati tramite Homebrew, se gia presente. Se manca anche Homebrew, installa prima Python da https://www.python.org/downloads/macos/ e Git tramite gli strumenti Xcode, poi riapri il launcher. Le librerie Python sono gestite automaticamente su entrambi i sistemi.
 
-Nome ed email Git identificano l'autore dei commit, ma non autorizzano il push. Su un computer nuovo usa **Accedi a GitHub** nella barra laterale: Git Credential Manager apre il browser, completa l'accesso OAuth e conserva la credenziale nel portachiavi del sistema. La dashboard non legge né salva password o token. Su Windows, Git Credential Manager viene installato insieme alle versioni recenti di Git for Windows.
+Nome ed email Git identificano l'autore dei commit, ma non autorizzano il push. Su un computer nuovo usa **GitHub · Windows** oppure **GitHub · Mac** nella barra laterale. Il pulsante controlla il sistema scelto, apre il login OAuth nel browser e conserva la credenziale nel Gestore credenziali di Windows o nel Portachiavi di macOS. La dashboard non legge né salva password o token. Su Windows, Git Credential Manager viene installato insieme alle versioni recenti di Git for Windows. Su macOS, se manca, installalo con `brew install --cask git-credential-manager` e riapri la dashboard.
 
 Un ambiente `.venv` non eseguibile o non compatibile viene conservato come `.venv.previous-*` e ricreato. Queste copie non vengono inviate a GitHub. Non copiare manualmente `.venv` tra computer: ogni sistema crea il proprio ambiente.
 
