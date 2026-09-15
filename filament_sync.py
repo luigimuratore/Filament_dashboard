@@ -3,7 +3,6 @@ from datetime import datetime
 from pathlib import Path
 from filament_lock import file_lock
 import os
-import re
 import subprocess
 import sys
 from urllib.parse import urlparse
@@ -17,6 +16,8 @@ PROJECT_FILES = [
     'filament_lock.py', 'avvia_dashboard.py', 'Avvia_Dashboard.bat',
     'Avvia_Dashboard.ps1', '.gitattributes', '.github/workflows/tests.yml',
 ]
+COMMIT_NAME = 'Filament Dashboard'
+COMMIT_EMAIL = 'filament-dashboard@users.noreply.github.com'
 
 
 class SyncError(Exception):
@@ -49,13 +50,15 @@ def git(root, *args):
             )
         if 'non-fast-forward' in details or 'fetch first' in details or 'rejected' in details:
             raise SyncError('GitHub contiene modifiche da integrare. Il commit resta locale: esegui pull dal terminale e risolvi eventuali conflitti, poi riprova. Nessun file remoto è stato sovrascritto.')
-        if ('permission to ' in details and ' denied to ' in details) or 'write access to repository not granted' in details:
+        if (('permission to ' in details and ' denied to ' in details)
+                or 'write access to repository not granted' in details
+                or 'repository not found' in details):
             raise SyncError(
                 'Il login è valido, ma l’account collegato non ha permesso di scrittura su questa repository. '
-                'Chiedi al proprietario di aggiungere questo account come collaboratore, poi riprova.'
+                'Il proprietario deve aggiungerlo ai Collaborators di GitHub e l’invito deve essere accettato.'
             )
         if 'identity unknown' in details or 'unable to auto-detect email' in details:
-            raise SyncError('Configura nome ed email Git sul computer prima di creare un commit (git config user.name e git config user.email).')
+            raise SyncError('Git non riesce a creare il commit con l’identità tecnica della dashboard.')
         if any(x in details for x in ('authentication', 'could not read username', 'permission denied', 'repository not found', '403', '401')):
             raise SyncError('Accesso a GitHub non disponibile. Usa “Accedi a GitHub” nella barra laterale e riprova; eventuali commit restano locali.')
         if any(x in details for x in ('resolve host', 'could not resolve', 'failed to connect', 'network')):
@@ -71,43 +74,26 @@ def github_owner(remote):
     if parsed.scheme != 'https' or parsed.hostname != 'github.com' or len(parts) < 2:
         raise SyncError('Il login guidato richiede una repository GitHub collegata tramite HTTPS.')
     owner = parts[0]
-    if not re.fullmatch(r'[A-Za-z0-9-]+', owner):
+    if not owner or any(char not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-' for char in owner):
         raise SyncError('Non riesco a riconoscere l’account proprietario dalla repository GitHub.')
     return owner
 
 
-def read_git_identity(root=BASE):
-    """Read the local/global commit identity and repository-specific GitHub account."""
-    root = Path(root)
-
-    def value(key):
-        try:
-            result = subprocess.run(
-                ['git', 'config', '--get', key], cwd=root, capture_output=True,
-                text=True, timeout=10,
-            )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            return ''
-        return result.stdout.strip() if result.returncode == 0 else ''
-
-    return {
-        'name': value('user.name'),
-        'email': value('user.email'),
-        'github_username': value('credential.https://github.com.username'),
-    }
-
-
-def configure_git_identity(root, name, email):
-    """Store a commit identity in this repository, leaving global Git settings alone."""
-    name, email = name.strip(), email.strip()
-    if not name:
-        raise SyncError('Inserisci il nome da mostrare nei commit.')
-    if not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', email):
-        raise SyncError('Inserisci un indirizzo email valido per l’autore dei commit.')
-    root = Path(root)
-    git(root, 'config', '--local', 'user.name', name)
-    git(root, 'config', '--local', 'user.email', email)
-    return f'Autore dei prossimi commit: {name} · {email}'
+def clear_legacy_github_username(root):
+    """Remove the account pin used by older versions, which can select stale credentials."""
+    try:
+        result = subprocess.run(
+            ['git', 'config', '--local', '--unset-all',
+             'credential.https://github.com.username'],
+            cwd=root, capture_output=True, text=True, timeout=10,
+        )
+    except FileNotFoundError:
+        raise SyncError('Git non è installato o non è disponibile.')
+    except subprocess.TimeoutExpired:
+        raise SyncError('Non riesco ad aggiornare la configurazione Git locale.')
+    # Git returns 5 when the key was not present: that is already the desired state.
+    if result.returncode not in (0, 5):
+        raise SyncError('Non riesco a rimuovere la vecchia selezione dell’account GitHub.')
 
 
 def integrate_remote(root, ahead, behind):
@@ -130,11 +116,12 @@ def integrate_remote(root, ahead, behind):
             f'GitHub e questo computer hanno modificato gli stessi file ({names}). '
             'Il merge automatico è stato fermato per non perdere dati: nessun file è stato sovrascritto.'
         )
-    git(root, 'merge', '--no-edit', 'FETCH_HEAD')
+    git(root, '-c', f'user.name={COMMIT_NAME}', '-c', f'user.email={COMMIT_EMAIL}',
+        'merge', '--no-edit', 'FETCH_HEAD')
     return True
 
 
-def authenticate_github(root=BASE, system=None, username=None):
+def authenticate_github(root=BASE, system=None):
     """Open Git Credential Manager's browser login and verify the saved credential."""
     root = Path(root)
     current_system = 'windows' if os.name == 'nt' else ('macos' if sys.platform == 'darwin' else 'other')
@@ -151,9 +138,6 @@ def authenticate_github(root=BASE, system=None, username=None):
         )
     remote = git(root, 'remote', 'get-url', 'origin')
     github_owner(remote)
-    username = (username or read_git_identity(root)['github_username']).strip()
-    if not re.fullmatch(r'[A-Za-z0-9-]+', username):
-        raise SyncError('Inserisci il tuo username GitHub prima di accedere.')
 
     env = dict(os.environ, GIT_TERMINAL_PROMPT='1', GCM_INTERACTIVE='always')
     try:
@@ -175,11 +159,9 @@ def authenticate_github(root=BASE, system=None, username=None):
             ['git', 'credential-manager', 'configure'], cwd=root, env=env,
             capture_output=True, text=True, timeout=30, check=True,
         )
-        # Pin this repository to the selected collaborator when several accounts are cached.
-        git(root, 'config', '--local', 'credential.https://github.com.username', username)
+        clear_legacy_github_username(root)
         login = subprocess.run(
-            ['git', 'credential-manager', 'github', 'login', '--browser', '--force',
-             '--username', username],
+            ['git', 'credential-manager', 'github', 'login', '--browser', '--force'],
             cwd=root, env=env, capture_output=True, text=True, timeout=300,
         )
     except FileNotFoundError:
@@ -195,7 +177,7 @@ def authenticate_github(root=BASE, system=None, username=None):
     # without changing the remote branch.
     branch = git(root, 'symbolic-ref', '--short', 'HEAD')
     git(root, 'push', '--dry-run', '--set-upstream', 'origin', branch)
-    return f'Accesso verificato come {username}, con permesso di scrittura. Ora puoi sincronizzare.'
+    return 'Accesso verificato: l’account GitHub scelto può scrivere nella repository.'
 
 
 def sync_project(root=BASE):
@@ -204,6 +186,7 @@ def sync_project(root=BASE):
     with file_lock(root / 'Tracker_Filament_Dashboard.lock', blocking=False):
         branch = git(root, 'symbolic-ref', '--short', 'HEAD')
         git(root, 'remote', 'get-url', 'origin')
+        clear_legacy_github_username(root)
         if git(root, 'diff', '--name-only', '--diff-filter=U'):
             raise SyncError('Ci sono conflitti Git da risolvere prima di sincronizzare.')
         staged = git(root, 'diff', '--cached', '--name-only').splitlines()
@@ -215,7 +198,8 @@ def sync_project(root=BASE):
             git(root, 'add', '--', *paths)
         changed = bool(git(root, 'diff', '--cached', '--name-only'))
         if changed:
-            git(root, 'commit', '-m', f'Aggiorna dashboard e dati · {datetime.now():%Y-%m-%d %H:%M:%S}')
+            git(root, '-c', f'user.name={COMMIT_NAME}', '-c', f'user.email={COMMIT_EMAIL}',
+                'commit', '-m', f'Aggiorna dashboard e dati · {datetime.now():%Y-%m-%d %H:%M:%S}')
         remote_branch = git(root, 'ls-remote', '--heads', 'origin', branch)
         if remote_branch:
             git(root, 'fetch', 'origin', branch)

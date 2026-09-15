@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 from filament_sync import (
     sync_project, authenticate_github, github_owner, git,
-    configure_git_identity, read_git_identity, SyncError,
+    SyncError,
 )
 
 
@@ -72,23 +72,25 @@ class SyncTests(unittest.TestCase):
     def test_github_browser_login_and_verification(self):
         completed = subprocess.CompletedProcess([], 0, stdout='ok', stderr='')
         with patch('filament_sync.git', side_effect=[
-                'https://github.com/example/dashboard.git', '', 'main', 'verified']) as git_call, \
+                'https://github.com/example/dashboard.git', 'main', 'verified']) as git_call, \
              patch('filament_sync.subprocess.run', return_value=completed) as run:
-            message = authenticate_github(self.root, username='collaborator')
+            message = authenticate_github(self.root)
         commands = [call.args[0] for call in run.call_args_list]
-        self.assertIn(['git', 'credential-manager', 'github', 'login', '--browser', '--force',
-                       '--username', 'collaborator'], commands)
-        git_call.assert_any_call(self.root, 'config', '--local',
-                                 'credential.https://github.com.username', 'collaborator')
+        self.assertIn(['git', 'credential-manager', 'github', 'login', '--browser', '--force'], commands)
+        self.assertIn(
+            ['git', 'config', '--local', '--unset-all',
+             'credential.https://github.com.username'],
+            commands,
+        )
         git_call.assert_any_call(self.root, 'push', '--dry-run', '--set-upstream', 'origin', 'main')
-        self.assertIn('permesso di scrittura', message)
+        self.assertIn('può scrivere', message)
 
     def test_github_login_requires_credential_manager(self):
         missing = subprocess.CompletedProcess([], 1, stdout='', stderr='missing')
         with patch('filament_sync.git', return_value='https://github.com/example/dashboard.git'), \
              patch('filament_sync.subprocess.run', return_value=missing):
             with self.assertRaisesRegex(SyncError, 'Credential Manager'):
-                authenticate_github(self.root, username='collaborator')
+                authenticate_github(self.root)
 
     def test_github_owner_from_remote(self):
         self.assertEqual(
@@ -98,14 +100,26 @@ class SyncTests(unittest.TestCase):
         with self.assertRaises(SyncError):
             github_owner('git@github.com:luigimuratore/Filament_dashboard.git')
 
-    def test_each_clone_has_its_own_commit_identity(self):
-        message = configure_git_identity(self.root, 'Mario Rossi', 'mario@example.com')
-        identity = read_git_identity(self.root)
-        self.assertEqual(identity['name'], 'Mario Rossi')
-        self.assertEqual(identity['email'], 'mario@example.com')
-        self.assertIn('Mario Rossi', message)
-        with self.assertRaisesRegex(SyncError, 'email valido'):
-            configure_git_identity(self.root, 'Mario Rossi', 'invalid')
+    def test_commit_uses_automatic_identity(self):
+        self.run_git(self.root, 'config', '--unset-all', 'user.name')
+        self.run_git(self.root, 'config', '--unset-all', 'user.email')
+        sync_project(self.root)
+        author = self.run_git(self.root, 'show', '-s', '--format=%an|%ae')
+        self.assertEqual(
+            author,
+            'Filament Dashboard|filament-dashboard@users.noreply.github.com',
+        )
+
+    def test_sync_removes_stale_github_account_pin(self):
+        key = 'credential.https://github.com.username'
+        self.run_git(self.root, 'config', '--local', key, 'wrong-account')
+        sync_project(self.root)
+        result = subprocess.run(
+            ['git', 'config', '--local', '--get-all', key], cwd=self.root,
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, '')
 
     def test_push_permission_error_is_distinct_from_missing_login(self):
         denied = subprocess.CompletedProcess(

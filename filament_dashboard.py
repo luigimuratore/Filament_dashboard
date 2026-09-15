@@ -7,11 +7,10 @@ import importlib
 import filament_store
 import filament_sync
 if not all(hasattr(filament_sync, name) for name in (
-        'pull_project', 'authenticate_github', 'read_git_identity', 'configure_git_identity')):
+        'pull_project', 'authenticate_github', 'clear_legacy_github_username')):
     importlib.reload(filament_sync)
 from filament_sync import (
-    sync_project, pull_project, authenticate_github, read_git_identity,
-    configure_git_identity, SyncError,
+    sync_project, pull_project, authenticate_github, SyncError,
 )
 
 # An already-running Streamlit session may retain the module from before an update.
@@ -257,12 +256,7 @@ with st.sidebar:
     st.divider()
     st.caption('Aggiornamenti GitHub')
     st.caption('Controllo automatico all’apertura. Le modifiche locali bloccano il pull per proteggere i dati.')
-    identity = read_git_identity(FILE.parent)
-    github_username = st.text_input(
-        'Il tuo username GitHub', value=identity['github_username'],
-        key='github_username', placeholder='es. mario-rossi',
-        help='Ogni collaboratore deve usare il proprio account GitHub.',
-    )
+    st.caption('Il push è consentito solo agli account aggiunti come Collaborators della repository.')
     login_windows, login_mac = st.columns(2)
     login_system = None
     if login_windows.button('GitHub · Windows', icon=':material/login:', key='login_github_windows',
@@ -274,7 +268,7 @@ with st.sidebar:
     if login_system:
         with st.spinner('Completa l’accesso nella finestra del browser…'):
             try:
-                auth_message = authenticate_github(system=login_system, username=github_username)
+                auth_message = authenticate_github(system=login_system)
             except (SyncError, OSError) as exc:
                 st.session_state['auth_result'] = ('error', str(exc))
             else:
@@ -283,20 +277,6 @@ with st.sidebar:
     if 'auth_result' in st.session_state:
         auth_kind, auth_message = st.session_state['auth_result']
         getattr(st, auth_kind)(auth_message)
-    with st.expander('Autore dei commit'):
-        st.caption('Questi dati identificano chi ha creato gli aggiornamenti nella cronologia GitHub.')
-        author_name = st.text_input('Nome', value=identity['name'], key='git_author_name')
-        author_email = st.text_input('Email Git', value=identity['email'], key='git_author_email')
-        if st.button('Salva autore', key='save_git_identity', width='stretch'):
-            try:
-                identity_message = configure_git_identity(FILE.parent, author_name, author_email)
-            except (SyncError, OSError) as exc:
-                st.session_state['identity_result'] = ('error', str(exc))
-            else:
-                st.session_state['identity_result'] = ('success', identity_message)
-        if 'identity_result' in st.session_state:
-            identity_kind, identity_message = st.session_state['identity_result']
-            getattr(st, identity_kind)(identity_message)
     if st.button('Recupera aggiornamenti', icon=':material/cloud_download:', key='pull_github', width='stretch'):
         if recover_updates():
             st.rerun()

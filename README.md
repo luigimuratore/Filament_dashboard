@@ -23,11 +23,9 @@ Il launcher controlla Python (3.11 o successivo), crea l'ambiente virtuale local
 
 **macOS:** Python e Git mancanti vengono installati tramite Homebrew, se gia presente. Se manca anche Homebrew, installa prima Python da https://www.python.org/downloads/macos/ e Git tramite gli strumenti Xcode, poi riapri il launcher. Le librerie Python sono gestite automaticamente su entrambi i sistemi.
 
-Nome ed email Git identificano l'autore dei commit, ma non autorizzano il push. Su un computer nuovo, inserisci il tuo username e usa **GitHub · Windows** oppure **GitHub · Mac** nella barra laterale. Ogni persona deve accedere col proprio account GitHub. Il proprietario deve prima invitarla da **Repository → Settings → Collaborators → Add people** e l'utente deve accettare l'invito.
+Su un computer nuovo, usa **GitHub · Windows** oppure **GitHub · Mac** nella barra laterale e scegli il tuo account nel browser. Il proprietario deve prima invitare quell’account da **Repository → Settings → Collaborators → Add people** e l’utente deve accettare l’invito. L’autorizzazione dipende dall’account GitHub, non dall’email configurata in Git.
 
-Il pulsante apre il login OAuth nel browser, associa questa sola repository all'account scelto e verifica il permesso di scrittura con un push di prova che non modifica GitHub. La dashboard non legge né salva password o token. Su Windows, Git Credential Manager viene installato insieme alle versioni recenti di Git for Windows. Su macOS, se manca, installalo con `brew install --cask git-credential-manager` e riapri la dashboard.
-
-In **Autore dei commit**, ogni utente salva il proprio nome e un'email associata al proprio account GitHub. Questi valori valgono solo per questa copia della dashboard e compariranno nei commit futuri, permettendo di vedere chi ha inviato ogni aggiornamento. GitHub conserva la cronologia completa nella pagina **Commits** della repository.
+Il pulsante apre il login OAuth nel browser e verifica il permesso di scrittura con un push di prova che non modifica GitHub. La dashboard non legge né salva password o token. Su Windows, Git Credential Manager viene installato insieme alle versioni recenti di Git for Windows. Su macOS, se manca, installalo con `brew install --cask git-credential-manager` e riapri la dashboard. I commit creati dalla dashboard usano automaticamente l’identità tecnica `Filament Dashboard`; non occorre configurare nome o email Git.
 
 Un ambiente `.venv` non eseguibile o non compatibile viene conservato come `.venv.previous-*` e ricreato. Queste copie non vengono inviate a GitHub. Non copiare manualmente `.venv` tra computer: ogni sistema crea il proprio ambiente.
 
@@ -76,7 +74,7 @@ I test lavorano su copie temporanee dell'archivio e coprono navigazione, registr
 
 Nella barra laterale, **Sincronizza con GitHub** crea un commit e invia a `origin` il branch corrente. Include codice della dashboard, test, configurazione, README e archivio Excel. File privati, ambiente virtuale, lock e backup non vengono aggiunti. Non serve eseguire comandi ogni volta.
 
-Git deve avere nome, email e credenziali GitHub configurati sul computer. Il pulsante non richiede password nella dashboard. Se il push fallisce, il commit resta locale e il pulsante può ritentare l’invio anche senza nuove modifiche.
+Git e Git Credential Manager devono essere disponibili sul computer. Il pulsante non richiede password nella dashboard: il push viene accettato solo se l’account autenticato è un collaboratore con permesso di scrittura. Se il push fallisce, il commit resta locale e il pulsante può ritentare l’invio anche senza nuove modifiche.
 
 All’apertura di ogni sessione della dashboard viene eseguito un controllo automatico: gli aggiornamenti GitHub vengono integrati solo se non ci sono modifiche locali e non servono merge. Il pulsante “Recupera aggiornamenti” ripete il controllo manualmente. Prima di aggiornare l’Excel viene conservata una copia `.backup.xlsx`. In caso di connessione assente o conflitto, la dashboard mostra un avviso e conserva i dati locali. Se viene aggiornato anche il codice, riavvia il launcher per caricare moduli e dipendenze aggiornati. Per usare l’Excel su più computer, lavora su uno alla volta e invia a fine lavoro; sull’altro apri la dashboard e verifica l’esito del recupero prima di registrare stampe.
 
