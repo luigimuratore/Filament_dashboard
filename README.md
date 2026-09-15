@@ -1,4 +1,4 @@
-# Filament · Il tuo laboratorio
+# Filament · MITIC Lab - 3ntr 3D printer
 
 Avvia `Avvia_Dashboard.command` con un doppio clic. Se la dashboard era già aperta, aggiorna la pagina.
 
