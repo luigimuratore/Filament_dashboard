@@ -89,6 +89,12 @@ class SyncTests(unittest.TestCase):
         with self.assertRaisesRegex(SyncError, 'relativo pulsante'):
             authenticate_github(self.root, system=wrong_system)
 
+    def test_github_login_explains_non_git_folder(self):
+        plain_folder = self.base / 'plain-folder'
+        plain_folder.mkdir()
+        with self.assertRaisesRegex(SyncError, 'scaricata come ZIP'):
+            authenticate_github(plain_folder)
+
     def remote_update(self):
         other = self.base / 'other'
         self.run_git(self.base, 'clone', '-b', 'main', str(self.remote), str(other))

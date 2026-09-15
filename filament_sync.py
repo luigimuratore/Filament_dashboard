@@ -34,6 +34,17 @@ def git(root, *args):
         raise SyncError('Operazione scaduta. Controlla la connessione e riprova; eventuali commit locali restano salvati.')
     if result.returncode:
         details = (result.stderr + result.stdout).lower()
+        if 'not a git repository' in details:
+            raise SyncError(
+                'Questa cartella non è una copia Git della dashboard. Scarica il progetto con '
+                '“git clone https://github.com/luigimuratore/Filament_dashboard.git” e avvia '
+                'la dashboard dalla nuova cartella.'
+            )
+        if 'no such remote' in details or "'origin' does not appear to be a git repository" in details:
+            raise SyncError(
+                'Manca il collegamento “origin” a GitHub. Nella cartella del progetto esegui: '
+                'git remote add origin https://github.com/luigimuratore/Filament_dashboard.git'
+            )
         if 'non-fast-forward' in details or 'fetch first' in details or 'rejected' in details:
             raise SyncError('GitHub contiene modifiche da integrare. Il commit resta locale: esegui pull dal terminale e risolvi eventuali conflitti, poi riprova. Nessun file remoto è stato sovrascritto.')
         if 'identity unknown' in details or 'unable to auto-detect email' in details:
@@ -56,6 +67,11 @@ def authenticate_github(root=BASE, system=None):
     if requested_system != current_system:
         label = 'Windows' if current_system == 'windows' else 'macOS'
         raise SyncError(f'Questo computer usa {label}: scegli il relativo pulsante di accesso.')
+    if not (root / '.git').is_dir():
+        raise SyncError(
+            'Questa cartella non contiene la repository Git. Probabilmente è stata scaricata come ZIP: '
+            'clona la repository da Terminale e avvia la dashboard dalla nuova cartella.'
+        )
     remote = git(root, 'remote', 'get-url', 'origin')
     if not remote.lower().startswith('https://github.com/'):
         raise SyncError('Il login guidato è disponibile per repository GitHub collegate tramite HTTPS.')

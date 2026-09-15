@@ -4,6 +4,14 @@
 
 Scarica o clona l'intera cartella del progetto, incluso l'archivio Excel.
 
+Per usare sincronizzazione, pull e login GitHub su un altro computer, la cartella deve essere creata con Git e non con **Download ZIP**:
+
+```sh
+git clone https://github.com/luigimuratore/Filament_dashboard.git
+```
+
+La cartella nascosta `.git` contiene il collegamento `origin`. Se copi soltanto i file o scarichi lo ZIP, la dashboard funziona localmente ma non può eseguire pull e push.
+
 - **Windows 10/11:** doppio clic su `Avvia_Dashboard.bat`.
 - **macOS:** doppio clic su `Avvia_Dashboard.command`.
 
