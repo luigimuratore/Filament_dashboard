@@ -6,9 +6,9 @@ import streamlit as st
 import importlib
 import filament_store
 import filament_sync
-if not hasattr(filament_sync, 'pull_project'):
+if not all(hasattr(filament_sync, name) for name in ('pull_project', 'authenticate_github')):
     importlib.reload(filament_sync)
-from filament_sync import sync_project, pull_project, SyncError
+from filament_sync import sync_project, pull_project, authenticate_github, SyncError
 
 # An already-running Streamlit session may retain the module from before an update.
 # Reload only when the required inventory API is missing, before importing its names.
@@ -251,6 +251,19 @@ with st.sidebar:
     st.divider()
     st.caption('Aggiornamenti GitHub')
     st.caption('Controllo automatico all’apertura. Le modifiche locali bloccano il pull per proteggere i dati.')
+    if st.button('Accedi a GitHub', icon=':material/login:', key='login_github', width='stretch',
+                 help='Apre GitHub nel browser e salva l’accesso in modo sicuro su questo computer.'):
+        with st.spinner('Completa l’accesso nella finestra del browser…'):
+            try:
+                auth_message = authenticate_github()
+            except (SyncError, OSError) as exc:
+                st.session_state['auth_result'] = ('error', str(exc))
+            else:
+                st.session_state['auth_result'] = ('success', auth_message)
+                st.session_state['pull_checked'] = False
+    if 'auth_result' in st.session_state:
+        auth_kind, auth_message = st.session_state['auth_result']
+        getattr(st, auth_kind)(auth_message)
     if st.button('Recupera aggiornamenti', icon=':material/cloud_download:', key='pull_github', width='stretch'):
         if recover_updates():
             st.rerun()

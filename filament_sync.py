@@ -38,11 +38,51 @@ def git(root, *args):
         if 'identity unknown' in details or 'unable to auto-detect email' in details:
             raise SyncError('Configura nome ed email Git sul computer prima di creare un commit (git config user.name e git config user.email).')
         if any(x in details for x in ('authentication', 'could not read username', 'permission denied', 'repository not found', '403', '401')):
-            raise SyncError('Accesso a GitHub non disponibile. Configura l’autenticazione Git sul computer e riprova; eventuali commit restano locali.')
+            raise SyncError('Accesso a GitHub non disponibile. Usa “Accedi a GitHub” nella barra laterale e riprova; eventuali commit restano locali.')
         if any(x in details for x in ('resolve host', 'could not resolve', 'failed to connect', 'network')):
             raise SyncError('Connessione a GitHub non riuscita. I dati e gli eventuali commit restano locali: riprova quando sei online.')
         raise SyncError(f'Operazione Git «{args[0]}» non riuscita. Controlla lo stato della repository dal terminale; eventuali commit locali restano salvati.')
     return result.stdout.strip()
+
+
+def authenticate_github(root=BASE):
+    """Open Git Credential Manager's browser login and verify the saved credential."""
+    root = Path(root)
+    remote = git(root, 'remote', 'get-url', 'origin')
+    if not remote.lower().startswith('https://github.com/'):
+        raise SyncError('Il login guidato è disponibile per repository GitHub collegate tramite HTTPS.')
+
+    env = dict(os.environ, GIT_TERMINAL_PROMPT='1', GCM_INTERACTIVE='always')
+    try:
+        available = subprocess.run(
+            ['git', 'credential-manager', '--version'], cwd=root, env=env,
+            capture_output=True, text=True, timeout=15,
+        )
+        if available.returncode:
+            raise SyncError(
+                'Git Credential Manager non è disponibile. Installa o aggiorna Git for Windows, '
+                'riapri la dashboard e riprova.'
+            )
+        subprocess.run(
+            ['git', 'credential-manager', 'configure'], cwd=root, env=env,
+            capture_output=True, text=True, timeout=30, check=True,
+        )
+        login = subprocess.run(
+            ['git', 'credential-manager', 'github', 'login', '--browser', '--force'],
+            cwd=root, env=env, capture_output=True, text=True, timeout=300,
+        )
+    except FileNotFoundError:
+        raise SyncError('Git non è installato o non è disponibile.')
+    except subprocess.TimeoutExpired:
+        raise SyncError('Accesso non completato in tempo. Riapri “Accedi a GitHub” e completa il login nel browser.')
+    except subprocess.CalledProcessError:
+        raise SyncError('Impossibile configurare Git Credential Manager. Aggiorna Git for Windows e riprova.')
+    if login.returncode:
+        raise SyncError('Accesso a GitHub non completato. Riprova e termina la procedura nel browser.')
+
+    # This remains non-interactive: it confirms that the credential has really been stored.
+    git(root, 'ls-remote', 'origin')
+    return 'Accesso a GitHub configurato su questo computer. Ora puoi sincronizzare.'
 
 
 def sync_project(root=BASE):

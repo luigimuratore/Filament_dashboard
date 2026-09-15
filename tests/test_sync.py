@@ -2,7 +2,8 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from filament_sync import sync_project, SyncError
+from unittest.mock import patch
+from filament_sync import sync_project, authenticate_github, SyncError
 
 
 class SyncTests(unittest.TestCase):
@@ -63,6 +64,24 @@ class SyncTests(unittest.TestCase):
         self.run_git(self.root, 'add', 'private.txt')
         with self.assertRaisesRegex(SyncError, 'file estranei'):
             sync_project(self.root)
+
+    def test_github_browser_login_and_verification(self):
+        completed = subprocess.CompletedProcess([], 0, stdout='ok', stderr='')
+        with patch('filament_sync.git', side_effect=[
+                'https://github.com/example/dashboard.git', 'verified']) as git_call, \
+             patch('filament_sync.subprocess.run', return_value=completed) as run:
+            message = authenticate_github(self.root)
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertIn(['git', 'credential-manager', 'github', 'login', '--browser', '--force'], commands)
+        git_call.assert_any_call(self.root, 'ls-remote', 'origin')
+        self.assertIn('configurato', message)
+
+    def test_github_login_requires_credential_manager(self):
+        missing = subprocess.CompletedProcess([], 1, stdout='', stderr='missing')
+        with patch('filament_sync.git', return_value='https://github.com/example/dashboard.git'), \
+             patch('filament_sync.subprocess.run', return_value=missing):
+            with self.assertRaisesRegex(SyncError, 'Credential Manager'):
+                authenticate_github(self.root)
 
     def remote_update(self):
         other = self.base / 'other'
