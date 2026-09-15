@@ -38,3 +38,11 @@ I test lavorano su copie temporanee dell'archivio e coprono navigazione, registr
 - **Modifica** nella scheda di una bobina apre materiale, marca, colore, peso netto iniziale e consumo totale. L’ID resta stabile. I dettagli corretti compaiono anche nello storico. Il consumo totale non può scendere sotto i grammi già registrati nelle stampe: correggi prima le stampe interessate.
 - **Modifica** nelle schede delle stampe permette di correggere nome, data, ora, note e tabella dei consumi (ugello, bobina, grammi). Puoi aggiungere o rimuovere righe. Il salvataggio restituisce i vecchi consumi alle relative bobine e applica quelli corretti, senza cambiare il setup attuale. Vengono bloccate correzioni che superano il filamento disponibile.
 - **Annulla** chiude la modifica senza salvare.
+
+## Sincronizzazione manuale con GitHub
+
+Nella barra laterale, **Sincronizza con GitHub** crea un commit e invia a `origin` il branch corrente. Include codice della dashboard, test, configurazione, README e archivio Excel. File privati, ambiente virtuale, lock e backup non vengono aggiunti. Non serve eseguire comandi ogni volta.
+
+Git deve avere nome, email e credenziali GitHub configurati sul computer. Il pulsante non richiede password nella dashboard. Se il push fallisce, il commit resta locale e il pulsante può ritentare l’invio anche senza nuove modifiche.
+
+Non viene eseguito un pull automatico. Se GitHub contiene aggiornamenti non presenti localmente, il push viene bloccato: integra prima le modifiche dal terminale. Per usare l’Excel su più computer, lavora su uno alla volta, invia a fine lavoro e fai pull sull’altro prima di iniziare.

@@ -5,6 +5,7 @@ import io
 import streamlit as st
 import importlib
 import filament_store
+from filament_sync import sync_project, SyncError
 
 # An already-running Streamlit session may retain the module from before an update.
 # Reload only when the required inventory API is missing, before importing its names.
@@ -225,6 +226,21 @@ with st.sidebar:
     st.divider()
     st.download_button('Scarica archivio Excel', FILE.read_bytes(), FILE.name, mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', width='stretch')
     st.caption('Dati salvati localmente · copia di sicurezza automatica a ogni modifica.')
+    st.divider()
+    st.caption('Condividi gli aggiornamenti')
+    st.caption('Invia codice, configurazione e archivio Excel a GitHub con un commit e push. Le modifiche restano locali fino al clic.')
+    if st.button('Sincronizza con GitHub', icon=':material/cloud_upload:', key='sync_github', width='stretch'):
+        with st.spinner('Commit e invio a GitHub…'):
+            try:
+                result = sync_project()
+            except (SyncError, OSError) as exc:
+                st.session_state['sync_result'] = ('error', str(exc))
+            else:
+                st.session_state['sync_result'] = ('success', result)
+    if 'sync_result' in st.session_state:
+        kind, message = st.session_state['sync_result']
+        getattr(st, kind)(message)
+
 
 if st.session_state.pop('reset_print', False):
     for key in list(st.session_state):
