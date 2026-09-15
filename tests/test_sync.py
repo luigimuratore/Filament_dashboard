@@ -60,7 +60,7 @@ class SyncTests(unittest.TestCase):
         self.run_git(other, 'push', 'origin', 'main')
         remote_head = self.run_git(other, 'rev-parse', 'HEAD')
         (self.root / 'README.md').write_text('Local change')
-        with self.assertRaisesRegex(SyncError, 'modifiche da integrare'):
+        with self.assertRaisesRegex(SyncError, 'stessi file'):
             sync_project(self.root)
         self.assertEqual(remote_head, self.run_git(self.base, '--git-dir', str(self.remote), 'rev-parse', 'main'))
 
@@ -156,6 +156,24 @@ class SyncTests(unittest.TestCase):
             pull_project(self.root)
         self.assertEqual(archive.read_bytes(), b'local work')
         self.run_git(self.root, 'commit', '-am', 'Local work')
-        with self.assertRaisesRegex(SyncError, 'aggiornamenti diversi'):
+        with self.assertRaisesRegex(SyncError, 'stessi file'):
             pull_project(self.root)
         self.assertEqual(archive.read_bytes(), b'local work')
+
+    def test_sync_auto_merges_disjoint_changes(self):
+        sync_project(self.root)
+        self.remote_update()
+        (self.root / 'README.md').write_text('Local documentation')
+        message = sync_project(self.root)
+        self.assertIn('inviato', message)
+        self.assertEqual(
+            (self.root / 'Tracker_Filament_Dashboard.xlsx').read_bytes(),
+            b'updated workbook',
+        )
+        verify = self.base / 'verify'
+        self.run_git(self.base, 'clone', '-b', 'main', str(self.remote), str(verify))
+        self.assertEqual((verify / 'README.md').read_text(), 'Local documentation')
+        self.assertEqual(
+            (verify / 'Tracker_Filament_Dashboard.xlsx').read_bytes(),
+            b'updated workbook',
+        )

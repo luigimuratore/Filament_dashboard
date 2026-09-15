@@ -110,6 +110,30 @@ def configure_git_identity(root, name, email):
     return f'Autore dei prossimi commit: {name} · {email}'
 
 
+def integrate_remote(root, ahead, behind):
+    """Merge FETCH_HEAD only when local and remote commits changed different files."""
+    if not behind:
+        return False
+    if not ahead:
+        git(root, 'merge', '--ff-only', 'FETCH_HEAD')
+        return True
+
+    base = git(root, 'merge-base', 'HEAD', 'FETCH_HEAD')
+    local_files = set(git(root, 'diff', '--name-only', base, 'HEAD').splitlines())
+    remote_files = set(git(root, 'diff', '--name-only', base, 'FETCH_HEAD').splitlines())
+    overlap = sorted(local_files & remote_files)
+    if overlap:
+        names = ', '.join(overlap[:3])
+        if len(overlap) > 3:
+            names += ', …'
+        raise SyncError(
+            f'GitHub e questo computer hanno modificato gli stessi file ({names}). '
+            'Il merge automatico è stato fermato per non perdere dati: nessun file è stato sovrascritto.'
+        )
+    git(root, 'merge', '--no-edit', 'FETCH_HEAD')
+    return True
+
+
 def authenticate_github(root=BASE, system=None, username=None):
     """Open Git Credential Manager's browser login and verify the saved credential."""
     root = Path(root)
@@ -192,6 +216,13 @@ def sync_project(root=BASE):
         changed = bool(git(root, 'diff', '--cached', '--name-only'))
         if changed:
             git(root, 'commit', '-m', f'Aggiorna dashboard e dati · {datetime.now():%Y-%m-%d %H:%M:%S}')
+        remote_branch = git(root, 'ls-remote', '--heads', 'origin', branch)
+        if remote_branch:
+            git(root, 'fetch', 'origin', branch)
+            ahead, behind = map(
+                int, git(root, 'rev-list', '--left-right', '--count',
+                         'HEAD...FETCH_HEAD').split())
+            integrate_remote(root, ahead, behind)
         # Push even without new changes: a previous attempt may have committed offline.
         git(root, 'push', '--set-upstream', 'origin', branch)
         return ('Commit creato e inviato a GitHub.' if changed else 'GitHub aggiornato. Nessuna nuova modifica da registrare.')
@@ -207,7 +238,8 @@ def pull_project(root=BASE):
         git(root, 'fetch', 'origin', branch)
         ahead, behind = map(int, git(root, 'rev-list', '--left-right', '--count', 'HEAD...FETCH_HEAD').split())
         if ahead and behind:
-            raise SyncError('Questo computer e GitHub hanno aggiornamenti diversi. Integra i commit dal terminale prima di continuare: nessun dato locale è stato sostituito.')
+            integrate_remote(root, ahead, behind)
+            return True, 'Aggiornamenti integrati automaticamente: i due computer avevano modificato file diversi.'
         if not behind:
             return False, 'Nessun aggiornamento da scaricare.' + (' Ci sono commit locali da inviare.' if ahead else '')
         # Recheck after the network request (external editors do not use our lock).

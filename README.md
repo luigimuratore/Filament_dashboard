@@ -80,6 +80,8 @@ Git deve avere nome, email e credenziali GitHub configurati sul computer. Il pul
 
 All’apertura di ogni sessione della dashboard viene eseguito un controllo automatico: gli aggiornamenti GitHub vengono integrati solo se non ci sono modifiche locali e non servono merge. Il pulsante “Recupera aggiornamenti” ripete il controllo manualmente. Prima di aggiornare l’Excel viene conservata una copia `.backup.xlsx`. In caso di connessione assente o conflitto, la dashboard mostra un avviso e conserva i dati locali. Se viene aggiornato anche il codice, riavvia il launcher per caricare moduli e dipendenze aggiornati. Per usare l’Excel su più computer, lavora su uno alla volta e invia a fine lavoro; sull’altro apri la dashboard e verifica l’esito del recupero prima di registrare stampe.
 
+Se il computer e GitHub contengono commit diversi, la sincronizzazione integra automaticamente le modifiche quando riguardano file differenti. Se entrambi hanno modificato lo stesso file, soprattutto l'archivio Excel, il merge viene fermato prima di cambiare i file locali: occorre decidere manualmente quale archivio conservare.
+
 ## Github codes to login
 git credential-manager configure
 git credential-manager github login --browser
