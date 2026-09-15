@@ -63,3 +63,36 @@ class SyncTests(unittest.TestCase):
         self.run_git(self.root, 'add', 'private.txt')
         with self.assertRaisesRegex(SyncError, 'file estranei'):
             sync_project(self.root)
+
+    def remote_update(self):
+        other = self.base / 'other'
+        self.run_git(self.base, 'clone', '-b', 'main', str(self.remote), str(other))
+        self.run_git(other, 'config', 'user.name', 'Test')
+        self.run_git(other, 'config', 'user.email', 'test@example.com')
+        (other / 'Tracker_Filament_Dashboard.xlsx').write_bytes(b'updated workbook')
+        self.run_git(other, 'commit', '-am', 'Update archive')
+        self.run_git(other, 'push', 'origin', 'main')
+
+    def test_pull_updates_archive_and_keeps_backup(self):
+        from filament_sync import pull_project
+        sync_project(self.root)
+        self.remote_update()
+        changed, message = pull_project(self.root)
+        self.assertTrue(changed)
+        self.assertEqual((self.root / 'Tracker_Filament_Dashboard.xlsx').read_bytes(), b'updated workbook')
+        self.assertEqual((self.root / 'Tracker_Filament_Dashboard.backup.xlsx').read_bytes(), b'test workbook')
+        self.assertFalse(pull_project(self.root)[0])
+
+    def test_pull_preserves_local_edits_and_divergent_commits(self):
+        from filament_sync import pull_project
+        sync_project(self.root)
+        self.remote_update()
+        archive = self.root / 'Tracker_Filament_Dashboard.xlsx'
+        archive.write_bytes(b'local work')
+        with self.assertRaisesRegex(SyncError, 'modifiche locali'):
+            pull_project(self.root)
+        self.assertEqual(archive.read_bytes(), b'local work')
+        self.run_git(self.root, 'commit', '-am', 'Local work')
+        with self.assertRaisesRegex(SyncError, 'aggiornamenti diversi'):
+            pull_project(self.root)
+        self.assertEqual(archive.read_bytes(), b'local work')

@@ -5,7 +5,10 @@ import io
 import streamlit as st
 import importlib
 import filament_store
-from filament_sync import sync_project, SyncError
+import filament_sync
+if not hasattr(filament_sync, 'pull_project'):
+    importlib.reload(filament_sync)
+from filament_sync import sync_project, pull_project, SyncError
 
 # An already-running Streamlit session may retain the module from before an update.
 # Reload only when the required inventory API is missing, before importing its names.
@@ -198,6 +201,25 @@ def csv_bytes(rows):
     return output.getvalue().encode('utf-8-sig')
 
 
+def recover_updates():
+    with st.spinner('Controllo aggiornamenti su GitHub…'):
+        try:
+            changed, message = pull_project(FILE.parent)
+        except (SyncError, OSError) as exc:
+            st.session_state['pull_result'] = ('warning', str(exc))
+        else:
+            st.session_state['pull_result'] = ('success', message)
+            if changed:
+                st.session_state.pop('editor', None)
+            return changed
+    return False
+
+
+if not st.session_state.get('pull_checked'):
+    st.session_state['pull_checked'] = True
+    if recover_updates():
+        st.rerun()
+
 try:
     wb = load()
     bs = bobine(wb); ass = assignments(wb); prints = history(wb)
@@ -227,7 +249,15 @@ with st.sidebar:
     st.download_button('Scarica archivio Excel', FILE.read_bytes(), FILE.name, mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', width='stretch')
     st.caption('Dati salvati localmente · copia di sicurezza automatica a ogni modifica.')
     st.divider()
-    st.caption('Condividi gli aggiornamenti')
+    st.caption('Aggiornamenti GitHub')
+    st.caption('Controllo automatico all’apertura. Le modifiche locali bloccano il pull per proteggere i dati.')
+    if st.button('Recupera aggiornamenti', icon=':material/cloud_download:', key='pull_github', width='stretch'):
+        if recover_updates():
+            st.rerun()
+    if 'pull_result' in st.session_state:
+        pull_kind, pull_message = st.session_state['pull_result']
+        getattr(st, pull_kind)(pull_message)
+
     st.caption('Invia codice, configurazione e archivio Excel a GitHub con un commit e push. Le modifiche restano locali fino al clic.')
     if st.button('Sincronizza con GitHub', icon=':material/cloud_upload:', key='sync_github', width='stretch'):
         with st.spinner('Commit e invio a GitHub…'):

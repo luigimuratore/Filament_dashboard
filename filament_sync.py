@@ -1,4 +1,4 @@
-"""Manual Git synchronization. Never pulls, merges or overwrites remote history."""
+"""Git synchronization with guarded fast-forward updates and explicit push."""
 from datetime import datetime
 from pathlib import Path
 from filament_lock import file_lock
@@ -66,3 +66,32 @@ def sync_project(root=BASE):
         # Push even without new changes: a previous attempt may have committed offline.
         git(root, 'push', '--set-upstream', 'origin', branch)
         return ('Commit creato e inviato a GitHub.' if changed else 'GitHub aggiornato. Nessuna nuova modifica da registrare.')
+
+
+def pull_project(root=BASE):
+    """Fetch and fast-forward only; never stash, reset or merge local Excel edits."""
+    root = Path(root)
+    with file_lock(root / 'Tracker_Filament_Dashboard.lock', blocking=False):
+        branch = git(root, 'symbolic-ref', '--short', 'HEAD')
+        if git(root, 'status', '--porcelain', '--untracked-files=no'):
+            raise SyncError('Aggiornamento sospeso: ci sono modifiche locali da salvare e inviare con “Sincronizza con GitHub”. I tuoi dati sono conservati.')
+        git(root, 'fetch', 'origin', branch)
+        ahead, behind = map(int, git(root, 'rev-list', '--left-right', '--count', 'HEAD...FETCH_HEAD').split())
+        if ahead and behind:
+            raise SyncError('Questo computer e GitHub hanno aggiornamenti diversi. Integra i commit dal terminale prima di continuare: nessun dato locale è stato sostituito.')
+        if not behind:
+            return False, 'Nessun aggiornamento da scaricare.' + (' Ci sono commit locali da inviare.' if ahead else '')
+        # Recheck after the network request (external editors do not use our lock).
+        if git(root, 'status', '--porcelain', '--untracked-files=no'):
+            raise SyncError('I file locali sono cambiati durante il controllo. Pull annullato: riprova dopo aver sincronizzato le modifiche.')
+        changed = git(root, 'diff', '--name-only', 'HEAD', 'FETCH_HEAD').splitlines()
+        archive = root / 'Tracker_Filament_Dashboard.xlsx'
+        if archive.exists() and archive.name in changed:
+            import shutil
+            shutil.copy2(archive, archive.with_suffix('.backup.xlsx'))
+        git(root, 'merge', '--ff-only', 'FETCH_HEAD')
+        code_changed = any(p.endswith(('.py', '.toml', '.command', '.bat', '.ps1')) or p == 'requirements.txt' for p in changed)
+        message = 'Aggiornamenti scaricati da GitHub. Dati locali aggiornati.'
+        if code_changed:
+            message += ' È cambiato anche il programma: chiudi e riapri il launcher per caricare codice e requisiti aggiornati.'
+        return True, message
