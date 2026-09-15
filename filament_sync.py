@@ -1,7 +1,7 @@
 """Manual Git synchronization. Never pulls, merges or overwrites remote history."""
 from datetime import datetime
 from pathlib import Path
-import fcntl
+from filament_lock import file_lock
 import os
 import subprocess
 
@@ -10,7 +10,9 @@ PROJECT_FILES = [
     '.gitignore', '.streamlit/config.toml', 'Avvia_Dashboard.command',
     'README.md', 'requirements.txt', 'filament_dashboard.py',
     'filament_store.py', 'filament_sync.py', 'Tracker_Filament_Dashboard.xlsx',
-    'tests/test_dashboard.py', 'tests/test_sync.py',
+    'tests/test_dashboard.py', 'tests/test_sync.py', 'tests/test_startup.py',
+    'filament_lock.py', 'avvia_dashboard.py', 'Avvia_Dashboard.bat',
+    'Avvia_Dashboard.ps1', '.gitattributes', '.github/workflows/tests.yml',
 ]
 
 
@@ -19,8 +21,8 @@ class SyncError(Exception):
 
 
 def git(root, *args):
-    env = dict(os.environ, GIT_TERMINAL_PROMPT='0', GIT_ASKPASS='/usr/bin/false',
-               SSH_ASKPASS='/usr/bin/false', GCM_INTERACTIVE='never',
+    env = dict(os.environ, GIT_TERMINAL_PROMPT='0', GIT_ASKPASS='echo',
+               SSH_ASKPASS='echo', GCM_INTERACTIVE='never',
                GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=10')
     try:
         result = subprocess.run(['git', *args], cwd=root, env=env, capture_output=True,
@@ -46,11 +48,7 @@ def git(root, *args):
 def sync_project(root=BASE):
     root = Path(root)
     # Use the workbook lock to keep dashboard writes out of the commit snapshot.
-    with (root / 'Tracker_Filament_Dashboard.lock').open('a') as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise SyncError('È già in corso un salvataggio o una sincronizzazione. Riprova tra poco.')
+    with file_lock(root / 'Tracker_Filament_Dashboard.lock', blocking=False):
         branch = git(root, 'symbolic-ref', '--short', 'HEAD')
         git(root, 'remote', 'get-url', 'origin')
         if git(root, 'diff', '--name-only', '--diff-filter=U'):

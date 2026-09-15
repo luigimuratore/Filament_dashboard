@@ -3,7 +3,7 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
-import fcntl
+from filament_lock import file_lock
 import hashlib
 import math
 import os
@@ -25,8 +25,7 @@ def load(path=FILE):
 
 def save(wb, path=FILE):
     path = Path(path)
-    with path.with_suffix('.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with file_lock(path.with_suffix('.lock')):
         if hashlib.sha256(path.read_bytes()).digest() != wb._revision:
             raise ValueError('I dati sono cambiati in un’altra finestra. Ricarica la pagina e riprova.')
         fd, name = tempfile.mkstemp(dir=path.parent, suffix='.xlsx')

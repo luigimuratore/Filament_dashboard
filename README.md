@@ -1,6 +1,27 @@
 # Filament · MITIC Lab - 3ntr 3D printer
 
-Avvia `Avvia_Dashboard.command` con un doppio clic. Se la dashboard era già aperta, aggiorna la pagina.
+## Avvio su Windows e macOS
+
+Scarica o clona l'intera cartella del progetto, incluso l'archivio Excel.
+
+- **Windows 10/11:** doppio clic su `Avvia_Dashboard.bat`.
+- **macOS:** doppio clic su `Avvia_Dashboard.command`.
+
+Il launcher controlla Python (3.11 o successivo), crea l'ambiente virtuale locale, verifica le versioni delle dipendenze e installa quelle mancanti o incompatibili. Poi apre la dashboard nel browser. Ai successivi avvii, se i requisiti sono soddisfatti, non reinstalla le librerie. La finestra del terminale deve restare aperta; Ctrl+C ferma la dashboard.
+
+### Installazione dei prerequisiti
+
+**Windows:** se Python manca, il launcher installa Python 3.12 tramite WinGet; se manca Git, tenta di installarlo allo stesso modo. Occorrono Internet e WinGet (App Installer dal Microsoft Store). Windows puo richiedere autorizzazioni di installazione; eventuali restrizioni aziendali non vengono aggirate. Se WinGet non e disponibile, il messaggio indica come installarlo. Se solo Git non si installa, la dashboard parte comunque e la sincronizzazione richiede di completare la configurazione Git.
+
+**macOS:** Python e Git mancanti vengono installati tramite Homebrew, se gia presente. Se manca anche Homebrew, installa prima Python da https://www.python.org/downloads/macos/ e Git tramite gli strumenti Xcode, poi riapri il launcher. Le librerie Python sono gestite automaticamente su entrambi i sistemi.
+
+L'autenticazione GitHub, nome ed email Git vanno configurati dall'utente. Non possono essere dedotti o creati dal launcher.
+
+Un ambiente `.venv` non eseguibile o non compatibile viene conservato come `.venv.previous-*` e ricreato. Queste copie non vengono inviate a GitHub. Non copiare manualmente `.venv` tra computer: ogni sistema crea il proprio ambiente.
+
+Per controllare i requisiti senza avviare il server, esegui `python avvia_dashboard.py --check` (su macOS `python3`). Il file Excel deve essere chiuso in Excel durante i salvataggi della dashboard, soprattutto su Windows.
+
+Il blocco dell'archivio usa le funzioni native del sistema operativo. Il workflow `.github/workflows/tests.yml` esegue i test su Windows e macOS a ogni push/PR. La verifica locale della migrazione e stata eseguita su macOS; il primo risultato Windows sara disponibile dopo il push.
 
 ## Il flusso quotidiano
 
