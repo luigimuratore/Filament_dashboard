@@ -101,6 +101,33 @@ class DashboardTests(unittest.TestCase):
             self.assertFalse(app.exception)
             self.assertIn(bid, [b['id'] for b in store.bobine(original_load(self.path))])
 
+    def test_new_spool_guided_choices_and_custom_values(self):
+        original_load, original_save = store.load, store.save
+        with patch.object(store, 'FILE', self.path), \
+             patch.object(store, 'load', side_effect=lambda: original_load(self.path)), \
+             patch.object(store, 'save', side_effect=lambda wb: original_save(wb, self.path)):
+            app = AppTest.from_file(str(ROOT / 'filament_dashboard.py')).run()
+            app.sidebar.radio[0].set_value('Magazzino').run()
+            self.assertEqual(app.selectbox(key='new_material_choice').value, 'ABS')
+            self.assertEqual(app.selectbox(key='new_brand_choice').value, '3ntr')
+            self.assertEqual(app.selectbox(key='new_color_choice').value, 'Nero')
+            app.selectbox(key='new_material_choice').set_value('Altro').run()
+            app.selectbox(key='new_brand_choice').set_value('Altro').run()
+            app.selectbox(key='new_color_choice').set_value('Altro').run()
+            app.text_input(key='new_material_custom').set_value('PETG')
+            app.text_input(key='new_brand_custom').set_value('Prusament')
+            app.text_input(key='new_color_custom').set_value('Galaxy Black')
+            app.number_input(key='new_spool_weight').set_value(750)
+            app.button(key='add_new_spool').click().run()
+            self.assertFalse(app.exception)
+            added = store.bobine(original_load(self.path))[-1]
+            self.assertEqual(
+                (added['materiale'], added['marca'], added['colore'], added['peso']),
+                ('PETG', 'Prusament', 'Galaxy Black', 750),
+            )
+            self.assertEqual(app.selectbox(key='new_material_choice').value, 'ABS')
+            self.assertEqual(app.selectbox(key='new_brand_choice').value, '3ntr')
+
     def test_edit_print_moves_consumption_and_rejects_overdraw(self):
         p = store.history(self.wb)[0]
         before = {b['id']: b['usati'] for b in store.bobine(self.wb)}

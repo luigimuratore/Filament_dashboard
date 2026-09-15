@@ -3,8 +3,10 @@ from datetime import datetime
 from pathlib import Path
 from filament_lock import file_lock
 import os
+import re
 import subprocess
 import sys
+from urllib.parse import urlparse
 
 BASE = Path(__file__).resolve().parent
 PROJECT_FILES = [
@@ -47,6 +49,11 @@ def git(root, *args):
             )
         if 'non-fast-forward' in details or 'fetch first' in details or 'rejected' in details:
             raise SyncError('GitHub contiene modifiche da integrare. Il commit resta locale: esegui pull dal terminale e risolvi eventuali conflitti, poi riprova. Nessun file remoto è stato sovrascritto.')
+        if ('permission to ' in details and ' denied to ' in details) or 'write access to repository not granted' in details:
+            raise SyncError(
+                'Il login è valido, ma l’account collegato non ha permesso di scrittura su questa repository. '
+                'Chiedi al proprietario di aggiungere questo account come collaboratore, poi riprova.'
+            )
         if 'identity unknown' in details or 'unable to auto-detect email' in details:
             raise SyncError('Configura nome ed email Git sul computer prima di creare un commit (git config user.name e git config user.email).')
         if any(x in details for x in ('authentication', 'could not read username', 'permission denied', 'repository not found', '403', '401')):
@@ -57,7 +64,53 @@ def git(root, *args):
     return result.stdout.strip()
 
 
-def authenticate_github(root=BASE, system=None):
+def github_owner(remote):
+    """Return the account name from an HTTPS GitHub remote."""
+    parsed = urlparse(remote)
+    parts = [part for part in parsed.path.split('/') if part]
+    if parsed.scheme != 'https' or parsed.hostname != 'github.com' or len(parts) < 2:
+        raise SyncError('Il login guidato richiede una repository GitHub collegata tramite HTTPS.')
+    owner = parts[0]
+    if not re.fullmatch(r'[A-Za-z0-9-]+', owner):
+        raise SyncError('Non riesco a riconoscere l’account proprietario dalla repository GitHub.')
+    return owner
+
+
+def read_git_identity(root=BASE):
+    """Read the local/global commit identity and repository-specific GitHub account."""
+    root = Path(root)
+
+    def value(key):
+        try:
+            result = subprocess.run(
+                ['git', 'config', '--get', key], cwd=root, capture_output=True,
+                text=True, timeout=10,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return ''
+        return result.stdout.strip() if result.returncode == 0 else ''
+
+    return {
+        'name': value('user.name'),
+        'email': value('user.email'),
+        'github_username': value('credential.https://github.com.username'),
+    }
+
+
+def configure_git_identity(root, name, email):
+    """Store a commit identity in this repository, leaving global Git settings alone."""
+    name, email = name.strip(), email.strip()
+    if not name:
+        raise SyncError('Inserisci il nome da mostrare nei commit.')
+    if not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', email):
+        raise SyncError('Inserisci un indirizzo email valido per l’autore dei commit.')
+    root = Path(root)
+    git(root, 'config', '--local', 'user.name', name)
+    git(root, 'config', '--local', 'user.email', email)
+    return f'Autore dei prossimi commit: {name} · {email}'
+
+
+def authenticate_github(root=BASE, system=None, username=None):
     """Open Git Credential Manager's browser login and verify the saved credential."""
     root = Path(root)
     current_system = 'windows' if os.name == 'nt' else ('macos' if sys.platform == 'darwin' else 'other')
@@ -73,8 +126,10 @@ def authenticate_github(root=BASE, system=None):
             'clona la repository da Terminale e avvia la dashboard dalla nuova cartella.'
         )
     remote = git(root, 'remote', 'get-url', 'origin')
-    if not remote.lower().startswith('https://github.com/'):
-        raise SyncError('Il login guidato è disponibile per repository GitHub collegate tramite HTTPS.')
+    github_owner(remote)
+    username = (username or read_git_identity(root)['github_username']).strip()
+    if not re.fullmatch(r'[A-Za-z0-9-]+', username):
+        raise SyncError('Inserisci il tuo username GitHub prima di accedere.')
 
     env = dict(os.environ, GIT_TERMINAL_PROMPT='1', GCM_INTERACTIVE='always')
     try:
@@ -96,8 +151,11 @@ def authenticate_github(root=BASE, system=None):
             ['git', 'credential-manager', 'configure'], cwd=root, env=env,
             capture_output=True, text=True, timeout=30, check=True,
         )
+        # Pin this repository to the selected collaborator when several accounts are cached.
+        git(root, 'config', '--local', 'credential.https://github.com.username', username)
         login = subprocess.run(
-            ['git', 'credential-manager', 'github', 'login', '--browser', '--force'],
+            ['git', 'credential-manager', 'github', 'login', '--browser', '--force',
+             '--username', username],
             cwd=root, env=env, capture_output=True, text=True, timeout=300,
         )
     except FileNotFoundError:
@@ -109,9 +167,11 @@ def authenticate_github(root=BASE, system=None):
     if login.returncode:
         raise SyncError('Accesso a GitHub non completato. Riprova e termina la procedura nel browser.')
 
-    # This remains non-interactive: it confirms that the credential has really been stored.
-    git(root, 'ls-remote', 'origin')
-    return 'Accesso a GitHub configurato su questo computer. Ora puoi sincronizzare.'
+    # A public repository can be read anonymously. A dry-run push checks real write access
+    # without changing the remote branch.
+    branch = git(root, 'symbolic-ref', '--short', 'HEAD')
+    git(root, 'push', '--dry-run', '--set-upstream', 'origin', branch)
+    return f'Accesso verificato come {username}, con permesso di scrittura. Ora puoi sincronizzare.'
 
 
 def sync_project(root=BASE):

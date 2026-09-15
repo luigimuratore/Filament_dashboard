@@ -4,7 +4,10 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from filament_sync import sync_project, authenticate_github, SyncError
+from filament_sync import (
+    sync_project, authenticate_github, github_owner, git,
+    configure_git_identity, read_git_identity, SyncError,
+)
 
 
 class SyncTests(unittest.TestCase):
@@ -69,20 +72,49 @@ class SyncTests(unittest.TestCase):
     def test_github_browser_login_and_verification(self):
         completed = subprocess.CompletedProcess([], 0, stdout='ok', stderr='')
         with patch('filament_sync.git', side_effect=[
-                'https://github.com/example/dashboard.git', 'verified']) as git_call, \
+                'https://github.com/example/dashboard.git', '', 'main', 'verified']) as git_call, \
              patch('filament_sync.subprocess.run', return_value=completed) as run:
-            message = authenticate_github(self.root)
+            message = authenticate_github(self.root, username='collaborator')
         commands = [call.args[0] for call in run.call_args_list]
-        self.assertIn(['git', 'credential-manager', 'github', 'login', '--browser', '--force'], commands)
-        git_call.assert_any_call(self.root, 'ls-remote', 'origin')
-        self.assertIn('configurato', message)
+        self.assertIn(['git', 'credential-manager', 'github', 'login', '--browser', '--force',
+                       '--username', 'collaborator'], commands)
+        git_call.assert_any_call(self.root, 'config', '--local',
+                                 'credential.https://github.com.username', 'collaborator')
+        git_call.assert_any_call(self.root, 'push', '--dry-run', '--set-upstream', 'origin', 'main')
+        self.assertIn('permesso di scrittura', message)
 
     def test_github_login_requires_credential_manager(self):
         missing = subprocess.CompletedProcess([], 1, stdout='', stderr='missing')
         with patch('filament_sync.git', return_value='https://github.com/example/dashboard.git'), \
              patch('filament_sync.subprocess.run', return_value=missing):
             with self.assertRaisesRegex(SyncError, 'Credential Manager'):
-                authenticate_github(self.root)
+                authenticate_github(self.root, username='collaborator')
+
+    def test_github_owner_from_remote(self):
+        self.assertEqual(
+            github_owner('https://github.com/luigimuratore/Filament_dashboard.git'),
+            'luigimuratore',
+        )
+        with self.assertRaises(SyncError):
+            github_owner('git@github.com:luigimuratore/Filament_dashboard.git')
+
+    def test_each_clone_has_its_own_commit_identity(self):
+        message = configure_git_identity(self.root, 'Mario Rossi', 'mario@example.com')
+        identity = read_git_identity(self.root)
+        self.assertEqual(identity['name'], 'Mario Rossi')
+        self.assertEqual(identity['email'], 'mario@example.com')
+        self.assertIn('Mario Rossi', message)
+        with self.assertRaisesRegex(SyncError, 'email valido'):
+            configure_git_identity(self.root, 'Mario Rossi', 'invalid')
+
+    def test_push_permission_error_is_distinct_from_missing_login(self):
+        denied = subprocess.CompletedProcess(
+            [], 128, stdout='',
+            stderr='remote: Permission to luigimuratore/Filament_dashboard.git denied to other-user.',
+        )
+        with patch('filament_sync.subprocess.run', return_value=denied):
+            with self.assertRaisesRegex(SyncError, 'non ha permesso di scrittura'):
+                git(self.root, 'push', 'origin', 'main')
 
     def test_github_login_rejects_wrong_platform_button(self):
         wrong_system = 'windows' if sys.platform == 'darwin' else 'macos'

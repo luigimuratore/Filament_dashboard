@@ -23,7 +23,11 @@ Il launcher controlla Python (3.11 o successivo), crea l'ambiente virtuale local
 
 **macOS:** Python e Git mancanti vengono installati tramite Homebrew, se gia presente. Se manca anche Homebrew, installa prima Python da https://www.python.org/downloads/macos/ e Git tramite gli strumenti Xcode, poi riapri il launcher. Le librerie Python sono gestite automaticamente su entrambi i sistemi.
 
-Nome ed email Git identificano l'autore dei commit, ma non autorizzano il push. Su un computer nuovo usa **GitHub · Windows** oppure **GitHub · Mac** nella barra laterale. Il pulsante controlla il sistema scelto, apre il login OAuth nel browser e conserva la credenziale nel Gestore credenziali di Windows o nel Portachiavi di macOS. La dashboard non legge né salva password o token. Su Windows, Git Credential Manager viene installato insieme alle versioni recenti di Git for Windows. Su macOS, se manca, installalo con `brew install --cask git-credential-manager` e riapri la dashboard.
+Nome ed email Git identificano l'autore dei commit, ma non autorizzano il push. Su un computer nuovo, inserisci il tuo username e usa **GitHub · Windows** oppure **GitHub · Mac** nella barra laterale. Ogni persona deve accedere col proprio account GitHub. Il proprietario deve prima invitarla da **Repository → Settings → Collaborators → Add people** e l'utente deve accettare l'invito.
+
+Il pulsante apre il login OAuth nel browser, associa questa sola repository all'account scelto e verifica il permesso di scrittura con un push di prova che non modifica GitHub. La dashboard non legge né salva password o token. Su Windows, Git Credential Manager viene installato insieme alle versioni recenti di Git for Windows. Su macOS, se manca, installalo con `brew install --cask git-credential-manager` e riapri la dashboard.
+
+In **Autore dei commit**, ogni utente salva il proprio nome e un'email associata al proprio account GitHub. Questi valori valgono solo per questa copia della dashboard e compariranno nei commit futuri, permettendo di vedere chi ha inviato ogni aggiornamento. GitHub conserva la cronologia completa nella pagina **Commits** della repository.
 
 Un ambiente `.venv` non eseguibile o non compatibile viene conservato come `.venv.previous-*` e ricreato. Queste copie non vengono inviate a GitHub. Non copiare manualmente `.venv` tra computer: ogni sistema crea il proprio ambiente.
 
@@ -35,7 +39,7 @@ Il blocco dell'archivio usa le funzioni native del sistema operativo. Il workflo
 
 1. **Panoramica**: controlla le bobine caricate sui tre ugelli. Apri “Cambia bobine” per assegnare, scambiare o scaricare una bobina. Una bobina può occupare un solo ugello.
 2. **Nuova stampa**: inserisci nome, data e grammi dello slicer per ogni ugello utilizzato. Includi supporti e spurghi; lascia zero sugli ugelli inutilizzati. Controlla il residuo previsto e registra una volta a stampa conclusa.
-3. **Magazzino**: tre colonne ABS, Supporto (anche PVA/BVOH) e Altro, con conteggio e grammi. Cerca per materiale, colore, marca o ID, filtra per posizione e disponibilità e ordina per residuo, grammi, colore o ID. Aggiungi ogni bobina acquistata indicando il peso netto del filamento. Il pulsante “Elimina” dentro ogni scheda permette di rimuovere una bobina non caricata; “Bobine eliminate” permette di ripristinarla. Le bobine eliminate non contribuiscono alle scorte e conservano ID e dettagli nello storico.
+3. **Magazzino**: tre colonne ABS, Supporto (anche PVA/BVOH) e Altro, con conteggio e grammi. Cerca per materiale, colore, marca o ID, filtra per posizione e disponibilità e ordina per residuo, grammi, colore o ID. Nell'aggiunta, materiale, marca e colore hanno valori guidati; scegli “Altro” per inserire una voce personalizzata. ABS, 3ntr e Nero sono i valori iniziali. Il pulsante “Elimina” dentro ogni scheda permette di rimuovere una bobina non caricata; “Bobine eliminate” permette di ripristinarla. Le bobine eliminate non contribuiscono alle scorte e conservano ID e dettagli nello storico.
 4. **Storico**: ogni stampa raggruppa i consumi dei diversi ugelli. Le schede mostrano data e ora, consumi per ugello, bobina, materiale, colore, marca e note; puoi anche esportare i consumi in CSV.
 
 ## Indicatori

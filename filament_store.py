@@ -133,7 +133,8 @@ def history(wb):
 
 
 def add_spool(wb, material, brand, color, weight):
-    if not material.strip() or not color.strip(): raise ValueError('Inserisci materiale e colore della bobina.')
+    if not material.strip() or not brand.strip() or not color.strip():
+        raise ValueError('Inserisci materiale, marca e colore della bobina.')
     if not math.isfinite(weight) or weight <= 0: raise ValueError('Il peso netto deve essere maggiore di zero.')
     bs = bobine(wb, include_removed=True)
     ids = [int(b['id'][1:]) for b in bs if b['id'].startswith('B') and b['id'][1:].isdigit()]

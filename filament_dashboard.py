@@ -6,9 +6,13 @@ import streamlit as st
 import importlib
 import filament_store
 import filament_sync
-if not all(hasattr(filament_sync, name) for name in ('pull_project', 'authenticate_github')):
+if not all(hasattr(filament_sync, name) for name in (
+        'pull_project', 'authenticate_github', 'read_git_identity', 'configure_git_identity')):
     importlib.reload(filament_sync)
-from filament_sync import sync_project, pull_project, authenticate_github, SyncError
+from filament_sync import (
+    sync_project, pull_project, authenticate_github, read_git_identity,
+    configure_git_identity, SyncError,
+)
 
 # An already-running Streamlit session may retain the module from before an update.
 # Reload only when the required inventory API is missing, before importing its names.
@@ -61,7 +65,7 @@ def e(value): return escape(str(value))
 def grams(value): return f'{value:,.1f}'.replace(',', ' ').replace('.0', '').replace('.', ',')
 def jump(page): st.session_state['page'] = page
 
-def commit(action, message, reset_print=False):
+def commit(action, message, reset_print=False, reset_spool=False):
     try:
         action()
         save(wb)
@@ -73,6 +77,8 @@ def commit(action, message, reset_print=False):
         if reset_print:
             st.session_state['reset_print'] = True
             st.session_state['next_page'] = 'Panoramica'
+        if reset_spool:
+            st.session_state['reset_spool'] = True
         st.rerun()
 
 
@@ -251,6 +257,12 @@ with st.sidebar:
     st.divider()
     st.caption('Aggiornamenti GitHub')
     st.caption('Controllo automatico all’apertura. Le modifiche locali bloccano il pull per proteggere i dati.')
+    identity = read_git_identity(FILE.parent)
+    github_username = st.text_input(
+        'Il tuo username GitHub', value=identity['github_username'],
+        key='github_username', placeholder='es. mario-rossi',
+        help='Ogni collaboratore deve usare il proprio account GitHub.',
+    )
     login_windows, login_mac = st.columns(2)
     login_system = None
     if login_windows.button('GitHub · Windows', icon=':material/login:', key='login_github_windows',
@@ -262,7 +274,7 @@ with st.sidebar:
     if login_system:
         with st.spinner('Completa l’accesso nella finestra del browser…'):
             try:
-                auth_message = authenticate_github(system=login_system)
+                auth_message = authenticate_github(system=login_system, username=github_username)
             except (SyncError, OSError) as exc:
                 st.session_state['auth_result'] = ('error', str(exc))
             else:
@@ -271,6 +283,20 @@ with st.sidebar:
     if 'auth_result' in st.session_state:
         auth_kind, auth_message = st.session_state['auth_result']
         getattr(st, auth_kind)(auth_message)
+    with st.expander('Autore dei commit'):
+        st.caption('Questi dati identificano chi ha creato gli aggiornamenti nella cronologia GitHub.')
+        author_name = st.text_input('Nome', value=identity['name'], key='git_author_name')
+        author_email = st.text_input('Email Git', value=identity['email'], key='git_author_email')
+        if st.button('Salva autore', key='save_git_identity', width='stretch'):
+            try:
+                identity_message = configure_git_identity(FILE.parent, author_name, author_email)
+            except (SyncError, OSError) as exc:
+                st.session_state['identity_result'] = ('error', str(exc))
+            else:
+                st.session_state['identity_result'] = ('success', identity_message)
+        if 'identity_result' in st.session_state:
+            identity_kind, identity_message = st.session_state['identity_result']
+            getattr(st, identity_kind)(identity_message)
     if st.button('Recupera aggiornamenti', icon=':material/cloud_download:', key='pull_github', width='stretch'):
         if recover_updates():
             st.rerun()
@@ -296,6 +322,13 @@ if st.session_state.pop('reset_print', False):
     for key in list(st.session_state):
         if key.startswith('cons_') or key in ('print_name', 'print_note'):
             del st.session_state[key]
+
+if st.session_state.pop('reset_spool', False):
+    for key in (
+            'new_material_choice', 'new_material_custom', 'new_brand_choice',
+            'new_brand_custom', 'new_color_choice', 'new_color_custom',
+            'new_spool_weight'):
+        st.session_state.pop(key, None)
 
 if 'flash' in st.session_state: st.success(st.session_state.pop('flash'))
 page = st.session_state['page']
@@ -350,15 +383,41 @@ elif page == 'Magazzino':
     st.title('Il tuo magazzino.')
     html('<p class="lead">ABS, supporti e altri materiali: trova subito una bobina e controlla quanto filamento rimane.</p>')
     with st.expander('＋ Aggiungi una bobina acquistata'):
-        with st.form('new_spool', clear_on_submit=True):
-            a, b = st.columns(2)
-            mat = a.text_input('Materiale', placeholder='Es. ABS, PLA, Supporto')
-            brand = b.text_input('Marca', placeholder='Es. 3ntr')
-            color = a.text_input('Colore', placeholder='Es. Nero')
-            weight = b.number_input('Peso netto del filamento (g)', min_value=1.0, value=1000.0, step=100.0)
-            st.caption('Escludi il peso della bobina vuota. La nuova bobina sarà disponibile in magazzino.')
-            if st.form_submit_button('Aggiungi al magazzino', type='primary'):
-                commit(lambda: add_spool(wb, mat, brand, color, weight), 'Nuova bobina aggiunta al magazzino.')
+        material_col, brand_col, color_col, weight_col = st.columns(4)
+        material_choice = material_col.selectbox(
+            'Materiale', ['ABS', 'Supporto', 'PLA', 'Altro'], index=0,
+            key='new_material_choice')
+        brand_choice = brand_col.selectbox(
+            'Marca', ['3ntr', 'Altro'], index=0, key='new_brand_choice')
+        color_choice = color_col.selectbox(
+            'Colore', [
+                'Nero', 'Bianco', 'Grigio', 'Rosso', 'Arancione', 'Giallo',
+                'Verde', 'Blu', 'Viola', 'Rosa', 'Marrone', 'Trasparente',
+                'Naturale', 'Altro',
+            ], index=0, key='new_color_choice')
+        weight = weight_col.number_input(
+            'Peso netto (g)', min_value=1.0, value=1000.0, step=100.0,
+            key='new_spool_weight')
+
+        custom_cols = st.columns(3)
+        material_custom = custom_cols[0].text_input(
+            'Specifica materiale', key='new_material_custom',
+            placeholder='Es. PETG, TPU…') if material_choice == 'Altro' else ''
+        brand_custom = custom_cols[1].text_input(
+            'Specifica marca', key='new_brand_custom',
+            placeholder='Nome produttore') if brand_choice == 'Altro' else ''
+        color_custom = custom_cols[2].text_input(
+            'Specifica colore', key='new_color_custom',
+            placeholder='Nome colore') if color_choice == 'Altro' else ''
+
+        material = material_custom.strip() if material_choice == 'Altro' else material_choice
+        brand = brand_custom.strip() if brand_choice == 'Altro' else brand_choice
+        color = color_custom.strip() if color_choice == 'Altro' else color_choice
+        st.caption('Escludi il peso della bobina vuota. La nuova bobina sarà disponibile in magazzino.')
+        if st.button('Aggiungi al magazzino', type='primary', key='add_new_spool'):
+            commit(
+                lambda: add_spool(wb, material, brand, color, weight),
+                'Nuova bobina aggiunta al magazzino.', reset_spool=True)
     a, b, c, d = st.columns([2, 1, 1, 1.4])
     query = a.text_input('Cerca', placeholder='Materiale, colore, marca o ID')
     place = b.selectbox('Posizione', ['Tutte', 'Magazzino', 'Caricate', 'Esaurite'])
