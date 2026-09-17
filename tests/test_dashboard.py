@@ -227,6 +227,7 @@ class DashboardTests(unittest.TestCase):
             app.sidebar.radio[0].set_value('Storico').run()
             next(x for x in app.button if x.key and x.key.startswith('edit_print_')).click().run()
             self.assertFalse(app.exception)
+            self.assertEqual(app.dataframe[0].value.iloc[0]['bobina'], 'B001 · ABS / Grigio')
             app.text_input(key='edit_print_name').set_value('Nome corretto')
             next(x for x in app.button if x.label == 'Salva modifiche').click().run()
             self.assertFalse(app.exception)
