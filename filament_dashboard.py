@@ -20,16 +20,18 @@ if not all(hasattr(filament_store, name) for name in (
         'remove_spool', 'restore_spool', 'material_group', 'update_spool',
         'update_print', 'delete_print', 'planned_prints', 'add_planned_print',
         'schedule_planned_print', 'unschedule_planned_print',
-        'complete_planned_print', 'delete_planned_print')):
+        'complete_planned_print', 'delete_planned_print', 'suggest_next_print',
+        'update_planned_priority', 'planning_priority', 'PLANNING_PRIORITIES')):
     importlib.invalidate_caches()
     importlib.reload(filament_store)
 
 from filament_store import (
-    FILE, load, save, bobine, assignments, history, health, restock,
+    FILE, PLANNING_PRIORITIES, load, save, bobine, assignments, history, health, restock,
     set_assignments, record_print, add_spool, remove_spool, restore_spool,
     material_group, update_spool, update_print, delete_print, planned_prints,
     add_planned_print, schedule_planned_print, unschedule_planned_print,
-    complete_planned_print, delete_planned_print,
+    complete_planned_print, delete_planned_print, suggest_next_print,
+    update_planned_priority, planning_priority,
 )
 
 st.set_page_config(page_title='Filament ·  MITIC lab', page_icon='◉', layout='wide')
@@ -66,6 +68,9 @@ button[kind="primary"],button[kind="primaryFormSubmit"]{background:#23725a;borde
 .stock-heading{border-bottom:2px solid #b8cdbd;padding:4px 0 16px;margin-bottom:18px}.stock-heading h2{margin:0;padding-bottom:4px}.nozzle-card{border-top:4px solid #23725a;padding:26px;min-height:315px}.nozzle-card .slot{font-size:32px;letter-spacing:-1px;font-weight:750}.nozzle-card .card-top{margin-bottom:23px}.nozzle-card .material{font-size:23px}.nozzle-card .meta{margin-bottom:28px}
 .print-card{background:white;border:1px solid var(--line);border-radius:14px;padding:22px;margin:12px 0 18px}.print-head{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;margin-bottom:18px}.print-name{font-size:19px;font-weight:700;overflow-wrap:anywhere}.print-date{font-size:12px;color:var(--muted);margin-top:4px}.print-total{text-align:right;white-space:nowrap;font-size:23px;font-weight:700}.print-total small{display:block;font-size:11px;font-weight:400;color:var(--muted)}.print-uses{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.print-use{background:#f5f7f3;border-radius:10px;padding:14px;overflow-wrap:anywhere}.print-use strong{display:block;font-size:15px;margin:9px 0 5px}.print-use .use-grams{font-size:20px;font-weight:700;margin-top:12px}.print-unused{color:#77847b;background:#fafbf9}.print-notes{border-top:1px solid var(--line);margin-top:16px;padding-top:12px;font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}.print-notes span{color:var(--muted)}
 .plan-summary{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin:8px 0 4px}.plan-summary .print-name{font-size:17px}.plan-meta{color:var(--muted);font-size:12px;margin-top:5px;line-height:1.5}.plan-time{font-weight:700;color:var(--green)}
+.efficient-suggestion{background:linear-gradient(135deg,#fff8df 0%,#fffdf5 100%);border:2px solid #d8a01f;box-shadow:0 5px 18px #8c64151c}.efficient-suggestion .plan-time{color:#8a5c00}.efficiency-badge{display:inline-block;background:#d8a01f;color:#fff;border-radius:999px;padding:4px 9px;margin-bottom:9px;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.efficient-queue{border:2px solid #d8a01f;background:#fffaf0;box-shadow:0 3px 12px #8c641512}.efficient-inline{color:#986710;font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;margin-left:8px}
+.priority-badge{display:inline-block;border-radius:999px;padding:4px 9px;font-size:10px;font-weight:800;letter-spacing:.055em;text-transform:uppercase;vertical-align:middle}.priority-subito{background:#fee4e2;color:#a52a20;border:1px solid #f5b7b1}.priority-urgente{background:#fff0d5;color:#9a5a00;border:1px solid #edc276}.priority-quando{background:#e8f2ed;color:#32654f;border:1px solid #bad5c8}.priority-card-subito{border-left:6px solid #c83d32}.priority-card-urgente{border-left:6px solid #d98b18}.priority-card-quando{border-left:6px solid #5d8a75}
+.schedule-overview{background:#fff;border:1px solid var(--line);border-radius:16px;padding:20px 22px;min-height:178px;box-shadow:0 3px 14px #173f330b}.schedule-overview.active{border-top:5px solid #23725a}.schedule-overview.next{border-top:5px solid #557c91}.schedule-overview.empty{border-style:dashed;box-shadow:none;background:#f8faf7}.schedule-label{font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:10px}.schedule-label .live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#2a8565;margin-right:6px}.schedule-overview .print-name{font-size:20px;margin:8px 0 6px}.schedule-window{font-size:13px;color:var(--muted);line-height:1.55}.schedule-window strong{color:var(--ink)}.schedule-progress{height:7px;background:#e8eee9;border-radius:99px;overflow:hidden;margin:15px 0 7px}.schedule-progress span{display:block;height:100%;background:#2f8064;border-radius:99px}.schedule-progress-label{font-size:11px;color:var(--muted);display:flex;justify-content:space-between;gap:12px}
 @media(max-width:760px){.print-uses{grid-template-columns:1fr}.nozzle-card .slot{font-size:29px}}
 @media(max-width:760px){[data-testid="stMainBlockContainer"]{padding:1.5rem 1rem}h1{font-size:2rem!important}.card{min-height:245px}}
 </style>''', unsafe_allow_html=True)
@@ -104,6 +109,57 @@ def parse_calendar_datetime(value):
     if parsed.tzinfo is not None:
         parsed = parsed.astimezone().replace(tzinfo=None)
     return parsed
+
+
+def calendar_colors(items):
+    colors, used_hues = {}, []
+    for item in sorted(items, key=lambda plan: plan['key']):
+        compact_key = item['key'].replace('-', '')
+        try: hue = int(compact_key[:8], 16) % 360
+        except ValueError: hue = sum((index + 1) * ord(char) for index, char in enumerate(item['key'])) % 360
+        for _ in range(24):
+            if all(min(abs(hue - used), 360 - abs(hue - used)) >= 24 for used in used_hues):
+                break
+            hue = (hue + 47) % 360
+        used_hues.append(hue)
+        colors[item['key']] = f'hsl({hue}, 58%, 36%)'
+    return colors
+
+
+def priority_style(value):
+    priority = planning_priority(value)
+    return {
+        'SUBITO': ('priority-subito', 'priority-card-subito', '⏱'),
+        'Urgente': ('priority-urgente', 'priority-card-urgente', '⚠'),
+        'Quando possibile': ('priority-quando', 'priority-card-quando', '○'),
+    }[priority]
+
+
+def priority_badge(value):
+    priority = planning_priority(value)
+    badge_class, _, icon = priority_style(priority)
+    return f'<span class="priority-badge {badge_class}">{icon} {e(priority)}</span>'
+
+
+def schedule_overview_card(plan, kind, now):
+    if not plan:
+        label = 'STAMPA IN CORSO' if kind == 'active' else 'STAMPA SUCCESSIVA'
+        message = 'Nessuna stampa in esecuzione.' if kind == 'active' else 'Nessuna stampa successiva programmata.'
+        return f'<div class="schedule-overview empty"><div class="schedule-label">{label}</div><div class="print-name">—</div><div class="schedule-window">{message}</div></div>'
+    start = plan['inizio']
+    end = start + timedelta(minutes=plan['durata'])
+    badge = priority_badge(plan['priorita'])
+    if kind == 'active':
+        elapsed = max(0, (now - start).total_seconds())
+        total = max(1, plan['durata'] * 60)
+        progress = min(100, elapsed / total * 100)
+        remaining = max(0, int(((end - now).total_seconds() + 59) // 60))
+        return f'''<div class="schedule-overview active"><div class="schedule-label"><span class="live-dot"></span>STAMPA IN CORSO</div>{badge}
+        <div class="print-name">{e(plan["nome"])}</div><div class="schedule-window">Termina <strong>{end.strftime("oggi alle %H:%M") if end.date() == now.date() else end.strftime("%d/%m alle %H:%M")}</strong> · {duration_label(plan["durata"])}</div>
+        <div class="schedule-progress"><span style="width:{progress:.1f}%"></span></div><div class="schedule-progress-label"><span>{progress:.0f}% trascorso</span><span>{duration_label(remaining)} rimanenti</span></div></div>'''
+    end_label = end.strftime('%H:%M') if end.date() == start.date() else end.strftime('%d/%m alle %H:%M')
+    return f'''<div class="schedule-overview next"><div class="schedule-label">STAMPA SUCCESSIVA</div>{badge}
+    <div class="print-name">{e(plan["nome"])}</div><div class="schedule-window">Inizia <strong>{weekday_label(start)} {start.strftime("%d/%m alle %H:%M")}</strong><br>Fine prevista {end_label} · {duration_label(plan["durata"])}</div></div>'''
 
 
 def normalize_spool_choices(rows):
@@ -207,6 +263,28 @@ def edit_print_dialog(p):
     if submitted:
         duration = int(duration_hours) * 60 + int(duration_minutes)
         commit(lambda: update_print(wb, p['key'], name, datetime.combine(date, time), note, normalize_spool_choices(edited), duration or None), 'Stampa corretta e scorte aggiornate.')
+
+
+@st.dialog('Cambia priorità', on_dismiss=close_editor)
+def priority_dialog(p):
+    st.caption(f'«{p["nome"]}» · la priorità influenza l’ordine della coda e la proposta ottimizzata.')
+    with st.form(f'priority_form_{p["key"]}'):
+        priority = st.radio(
+            'Priorità', PLANNING_PRIORITIES,
+            index=PLANNING_PRIORITIES.index(planning_priority(p.get('priorita'))),
+            horizontal=True, key=f'priority_value_{p["key"]}',
+        )
+        save_action, cancel = st.columns(2)
+        submitted = save_action.form_submit_button('Salva priorità', type='primary', width='stretch')
+        cancelled = cancel.form_submit_button('Annulla', width='stretch')
+    if cancelled:
+        close_editor()
+        st.rerun()
+    if submitted:
+        commit(
+            lambda: update_planned_priority(wb, p['key'], priority),
+            f'Priorità di «{p["nome"]}» aggiornata a {priority}.',
+        )
 
 
 @st.dialog('Inserisci nel calendario', on_dismiss=close_editor)
@@ -399,7 +477,7 @@ if st.session_state.pop('reset_print', False):
     for key in list(st.session_state):
         if key.startswith('cons_') or key in (
                 'print_name', 'print_note', 'print_mode', 'print_duration_hours',
-                'print_duration_minutes'):
+                'print_duration_minutes', 'print_priority'):
             del st.session_state[key]
 
 if st.session_state.pop('reset_spool', False):
@@ -418,17 +496,28 @@ if page == 'Panoramica':
     _, action = st.columns([3, 1])
     with action:
         st.button('＋ Registra una stampa', type='primary', width='stretch', on_click=jump, args=('Nuova stampa',))
+    overview_now = datetime.now()
+    overview_scheduled = [p for p in plans if p['inizio'] is not None]
+    active_plan = next((p for p in overview_scheduled
+                        if p['inizio'] <= overview_now < p['inizio'] + timedelta(minutes=p['durata'])), None)
+    next_plan = min(
+        (p for p in overview_scheduled if p['inizio'] > overview_now),
+        key=lambda p: p['inizio'], default=None,
+    )
+    st.subheader('Produzione')
+    active_col, next_col = st.columns(2, gap='medium')
+    with active_col:
+        html(schedule_overview_card(active_plan, 'active', overview_now))
+    with next_col:
+        html(schedule_overview_card(next_plan, 'next', overview_now))
+    queued_count = sum(p['inizio'] is None for p in plans)
+    if queued_count:
+        st.caption(f'{queued_count} {"stampa" if queued_count == 1 else "stampe"} ancora da inserire nel calendario.')
+    st.button('Apri la pianificazione →', on_click=jump, args=('Pianificazione',))
+
     for n, col in enumerate(st.columns(3), 1):
         with col: spool_card(byid.get(ass.get(n)), n)
     setup()
-    upcoming = [p for p in plans if p['inizio'] is not None and p['inizio'] + timedelta(minutes=p['durata']) >= datetime.now()]
-    if upcoming:
-        next_plan = min(upcoming, key=lambda p: p['inizio'])
-        html(f'<div class="notice"><strong>Prossima stampa: {e(next_plan["nome"])}</strong><br>{next_plan["inizio"].strftime("%d/%m/%Y alle %H:%M")} · {duration_label(next_plan["durata"])}.</div>')
-        st.button('Apri la pianificazione →', on_click=jump, args=('Pianificazione',))
-    elif plans:
-        st.info(f'{len(plans)} stampe in coda da inserire nel calendario.')
-        st.button('Pianifica le stampe →', on_click=jump, args=('Pianificazione',))
     critical = [b for b in bs if b['pct'] <= 20]
     if critical:
         html(f'<div class="notice"><strong>{len(critical)} bobine al 20% o meno.</strong> Controlla i ricambi prima della prossima stampa.</div>')
@@ -460,6 +549,12 @@ elif page == 'Nuova stampa':
     duration_hours = duration_hours_col.number_input('Durata · ore', min_value=0, value=1, step=1, key='print_duration_hours')
     duration_minutes = duration_minutes_col.number_input('Durata · minuti', min_value=0, max_value=59, value=0, step=1, key='print_duration_minutes')
     duration = int(duration_hours) * 60 + int(duration_minutes)
+    priority = 'Quando possibile'
+    if mode == 'Da programmare':
+        priority = st.radio(
+            'Priorità della stampa', PLANNING_PRIORITIES, index=2, horizontal=True,
+            key='print_priority', help='SUBITO viene valutata prima di Urgente, poi di Quando possibile.',
+        )
     cons = {}
     for n, col in enumerate(st.columns(3), 1):
         with col:
@@ -478,7 +573,7 @@ elif page == 'Nuova stampa':
     else:
         st.info(f"Previsione: {duration_label(duration)} · {grams(sum(cons.values()))} g. Verrà aggiunta alla coda senza scalare le bobine.")
         if st.button('Aggiungi alla coda di pianificazione', type='primary', disabled=not loaded or duration <= 0):
-            commit(lambda: add_planned_print(wb, name, cons, duration, note), 'Stampa aggiunta alla coda. Ora puoi inserirla nel calendario.', reset_print=True, next_page='Pianificazione')
+            commit(lambda: add_planned_print(wb, name, cons, duration, note, priority=priority), 'Stampa aggiunta alla coda. Ora puoi inserirla nel calendario.', reset_print=True, next_page='Pianificazione')
 
 elif page == 'Pianificazione':
     st.title('La regia delle stampe.')
@@ -500,20 +595,91 @@ elif page == 'Pianificazione':
         details = ' · '.join(f'{bid}: previsti {grams(need)} g, disponibili {grams(available)} g' for bid, need, available in risks)
         st.warning(f'Il piano complessivo supera la disponibilità di alcune bobine. {details}')
 
+    calendar_colors_by_key = calendar_colors(plans)
+    suggestion = suggest_next_print(plans)
+    suggestion_key = suggestion['proposta']['key'] if suggestion else None
+    active_now = next((p for p in scheduled
+                       if p['inizio'] <= datetime.now() < p['inizio'] + timedelta(minutes=p['durata'])), None)
+
+    st.subheader('Stampe da pianificare')
+    st.caption('Le stampe in coda sono anche nella fascia “Da pianificare” del calendario: trascinale direttamente sul giorno e sull’ora desiderati.')
+    if suggestion:
+        proposed = suggestion['proposta']
+        previous = suggestion.get('precedente', suggestion['attiva'])
+        previous_end = previous['inizio'] + timedelta(minutes=previous['durata'])
+        with st.container(border=True, key=f'suggestion_{proposed["key"]}'):
+            info, action = st.columns([4, 1.35])
+            with info:
+                html(f'''<div class="plan-summary efficient-suggestion">
+                <span class="efficiency-badge">★ Proposta più efficiente</span> {priority_badge(proposed["priorita"])}
+                <div class="print-name">{e(proposed["nome"])}</div>
+                <div class="plan-meta">Dopo «{e(previous["nome"])}», che termina {previous_end.strftime("%d/%m alle %H:%M")} · {suggestion["cambio_minuti"]} min per cambio stampa<br>
+                <span class="plan-time">{suggestion["inizio"].strftime("%d/%m · %H:%M")}–{suggestion["fine"].strftime("%d/%m · %H:%M")}</span> · {duration_label(proposed["durata"])} · fine in orario lavorativo</div></div>''')
+                st.caption('Prima rispetta la priorità della coda; tra le stampe con la priorità più alta sceglie la più lunga che termina tra le 08:30 e le 17:30 senza interferire con altri blocchi.')
+            with action:
+                if st.button('Accetta proposta', icon=':material/auto_awesome:', type='primary',
+                             key=f'accept_suggestion_{proposed["key"]}', width='stretch'):
+                    st.session_state['calendar_focus_date'] = suggestion['inizio'].date()
+                    st.session_state['calendar_nonce'] = st.session_state.get('calendar_nonce', 0) + 1
+                    commit(
+                        lambda: schedule_planned_print(wb, proposed['key'], suggestion['inizio']),
+                        f'«{proposed["nome"]}» inserita automaticamente nel calendario.')
+        st.caption('Il bordo dorato identifica la scelta più efficiente. Se non la accetti, coda e calendario rimangono invariati.')
+    elif active_now and queued:
+        st.info('Nessuna stampa in coda entra negli spazi liberi successivi con 30 minuti di cambio e fine in orario lavorativo.')
+    elif active_now:
+        st.info('La stampante è in funzione, ma non ci sono stampe nella coda da proporre.')
+    else:
+        st.info('La proposta ottimizzata apparirà mentre una stampa calendarizzata è effettivamente in corso.')
+
+    if not queued:
+        st.success('La coda è vuota: tutte le stampe sono state inserite nel calendario.')
+    for p in queued:
+        is_efficient = p['key'] == suggestion_key
+        _, priority_card_class, _ = priority_style(p['priorita'])
+        card_class = f'plan-summary {priority_card_class}' + (' efficient-queue' if is_efficient else '')
+        efficiency_mark = '<span class="efficient-inline">★ Più efficiente</span>' if is_efficient else ''
+        with st.container(border=True, key=f'queue_card_{p["key"]}'):
+            info, action = st.columns([4, 1.4])
+            with info:
+                html(f'<div class="{card_class}">{priority_badge(p["priorita"])}{efficiency_mark}<div class="print-name" style="margin-top:8px">{e(p["nome"])}</div><div class="plan-meta">{duration_label(p["durata"])} · {grams(p["totale"])} g previsti · {len(p["consumi"])} ugelli</div></div>')
+            with action:
+                if st.button('Pianifica', icon=':material/calendar_add_on:', key=f'schedule_{p["key"]}', type='primary', width='stretch'):
+                    st.session_state['editor'] = ('schedule', p['key'])
+                if st.button('Priorità', icon=':material/flag:', key=f'priority_plan_{p["key"]}', width='stretch'):
+                    st.session_state['editor'] = ('priority', p['key'])
+                if st.button('Elimina', icon=':material/delete:', key=f'delete_plan_{p["key"]}', width='stretch'):
+                    commit(lambda key=p['key']: delete_planned_print(wb, key), f'«{p["nome"]}» rimossa dalla pianificazione.')
+
     st.subheader('Calendario settimanale')
-    st.caption('Trascina un blocco con il mouse per cambiare giorno o ora. Gli spostamenti sono agganciati a intervalli di 15 minuti e vengono salvati al rilascio.')
-    calendar_events = [{
+    st.caption('Trascina un blocco dalla fascia “Da pianificare” dentro la griglia oraria, oppure sposta un blocco già inserito. Il rilascio salva automaticamente con precisione di 15 minuti.')
+    scheduled_events = [{
         'id': p['key'],
-        'title': f"{p['nome']} · {duration_label(p['durata'])} · {grams(p['totale'])} g",
+        'title': f"{priority_style(p['priorita'])[2]} {p['priorita'].upper()} · {p['nome']} · {duration_label(p['durata'])} · {grams(p['totale'])} g",
         'start': p['inizio'].isoformat(),
         'end': (p['inizio'] + timedelta(minutes=p['durata'])).isoformat(),
-        'backgroundColor': '#28775f' if sum(ord(c) for c in p['key']) % 2 else '#486f86',
+        'backgroundColor': calendar_colors_by_key[p['key']],
         'borderColor': 'transparent',
         'textColor': '#ffffff',
     } for p in scheduled]
+    queued_events = [{
+        'id': p['key'],
+        'title': f"{'★ PIÙ EFFICIENTE · ' if p['key'] == suggestion_key else ''}{priority_style(p['priorita'])[2]} {p['priorita'].upper()} · {p['nome']} · {duration_label(p['durata'])}",
+        'daysOfWeek': [((index % 7) + 1) % 7],
+        'allDay': True,
+        'backgroundColor': calendar_colors_by_key[p['key']],
+        'borderColor': '#f0bd3f' if p['key'] == suggestion_key else calendar_colors_by_key[p['key']],
+        'textColor': '#ffffff',
+        'classNames': ['queue-event'] + (['efficient-event'] if p['key'] == suggestion_key else []),
+        'extendedProps': {'planningState': 'queued'},
+    } for index, p in enumerate(queued)]
+    calendar_events = scheduled_events + queued_events
     focus_date = st.session_state.get('calendar_focus_date', datetime.now().date())
     if isinstance(focus_date, datetime):
         focus_date = focus_date.date()
+    calendar_signature = hash(tuple(
+        (p['key'], p['inizio'], p['durata'], p['priorita']) for p in plans
+    ))
     calendar_state = calendar(
         events=calendar_events,
         options={
@@ -526,7 +692,10 @@ elif page == 'Pianificazione':
             'eventDurationEditable': False,
             'eventOverlap': False,
             'slotEventOverlap': False,
-            'allDaySlot': False,
+            'allDaySlot': True,
+            'allDayText': 'DA PIANIFICARE',
+            'allDayMaintainDuration': False,
+            'dayMaxEvents': False,
             'nowIndicator': True,
             'slotMinTime': '00:00:00',
             'slotMaxTime': '24:00:00',
@@ -553,6 +722,11 @@ elif page == 'Pianificazione':
             .fc .fc-timegrid-slot-label-cushion { font-size: 8px; line-height: 1; padding: 0 3px; }
             .fc .fc-timegrid-event { border-radius: 4px; cursor: grab; box-shadow: 0 1px 3px #173f3326; font-size: 8px; line-height: 1; }
             .fc .fc-timegrid-event:active { cursor: grabbing; }
+            .fc .fc-timegrid-axis-cushion { max-width: 54px; white-space: normal; text-align: center; font-size: 7px; font-weight: 800; line-height: 1.15; }
+            .fc .queue-event { cursor: grab; border-width: 2px !important; border-radius: 5px; box-shadow: 0 1px 4px #173f3330; }
+            .fc .queue-event:active { cursor: grabbing; }
+            .fc .efficient-event { border-width: 3px !important; box-shadow: 0 0 0 2px #fff6cf, 0 2px 7px #9b6b1c66; }
+            .fc .fc-daygrid-day-events { min-height: 20px; }
             .fc .fc-event-main { padding: 1px 2px; }
             .fc .fc-event-time { font-size: 7px; }
             .fc .fc-event-title { font-size: 8px; }
@@ -572,37 +746,34 @@ elif page == 'Pianificazione':
             }
         ''',
         callbacks=['eventChange'],
-        key=f'planning_calendar_{st.session_state.get("calendar_nonce", 0)}',
+        key=f'planning_calendar_{st.session_state.get("calendar_nonce", 0)}_{calendar_signature}',
     )
     if calendar_state and calendar_state.get('callback') == 'eventChange':
         changed = calendar_state.get('eventChange', {}).get('event', {})
         try:
             moved_key = str(changed['id'])
-            moved_start = parse_calendar_datetime(changed['start'])
-            schedule_planned_print(wb, moved_key, moved_start)
-            save(wb)
-        except (KeyError, TypeError, ValueError, OSError) as exc:
+            moved_plan = next(p for p in plans if p['key'] == moved_key)
+            if changed.get('allDay'):
+                if moved_plan['inizio'] is None:
+                    raise ValueError('Trascina il blocco nella griglia delle ore per programmarlo.')
+                unschedule_planned_print(wb, moved_key)
+                save(wb)
+                moved_start = None
+            else:
+                moved_start = parse_calendar_datetime(changed['start'])
+                schedule_planned_print(wb, moved_key, moved_start)
+                save(wb)
+        except (KeyError, StopIteration, TypeError, ValueError, OSError) as exc:
             st.session_state['flash_error'] = f'Spostamento annullato: {exc}'
         else:
-            moved_name = next((p['nome'] for p in scheduled if p['key'] == moved_key), 'Stampa')
-            st.session_state['flash'] = f'«{moved_name}» spostata al {moved_start.strftime("%d/%m/%Y alle %H:%M")}.'
-            st.session_state['calendar_focus_date'] = moved_start.date()
+            if moved_start is None:
+                st.session_state['flash'] = f'«{moved_plan["nome"]}» rimessa nella coda.'
+            else:
+                verb = 'inserita' if moved_plan['inizio'] is None else 'spostata'
+                st.session_state['flash'] = f'«{moved_plan["nome"]}» {verb} al {moved_start.strftime("%d/%m/%Y alle %H:%M")}.'
+                st.session_state['calendar_focus_date'] = moved_start.date()
         st.session_state['calendar_nonce'] = st.session_state.get('calendar_nonce', 0) + 1
         st.rerun()
-
-    st.subheader('Coda da pianificare')
-    if not queued:
-        st.success('La coda è vuota: tutte le stampe sono state inserite nel calendario.')
-    for p in queued:
-        with st.container(border=True, key=f'queue_card_{p["key"]}'):
-            info, action = st.columns([4, 1.4])
-            with info:
-                html(f'<div class="plan-summary"><div class="print-name">{e(p["nome"])}</div><div class="plan-meta">{duration_label(p["durata"])} · {grams(p["totale"])} g previsti · {len(p["consumi"])} ugelli</div></div>')
-            with action:
-                if st.button('Pianifica', icon=':material/calendar_add_on:', key=f'schedule_{p["key"]}', type='primary', width='stretch'):
-                    st.session_state['editor'] = ('schedule', p['key'])
-                if st.button('Elimina', icon=':material/delete:', key=f'delete_plan_{p["key"]}', width='stretch'):
-                    commit(lambda key=p['key']: delete_planned_print(wb, key), f'«{p["nome"]}» rimossa dalla pianificazione.')
 
     st.subheader('Stampe in calendario')
     if not scheduled:
@@ -611,13 +782,14 @@ elif page == 'Pianificazione':
         end = p['inizio'] + timedelta(minutes=p['durata'])
         end_label = end.strftime('%H:%M') if end.date() == p['inizio'].date() else end.strftime('%d/%m · %H:%M')
         with st.container(border=True, key=f'scheduled_card_{p["key"]}'):
-            html(f'<div class="plan-summary"><div class="print-name">{e(p["nome"])}</div><div class="plan-meta"><span class="plan-time">{weekday_label(p["inizio"])} {p["inizio"].strftime("%d/%m · %H:%M")}–{end_label}</span> · {duration_label(p["durata"])} · {grams(p["totale"])} g previsti</div></div>')
+            html(f'<div class="plan-summary" style="border-left:5px solid {calendar_colors_by_key[p["key"]]}">{priority_badge(p["priorita"])}<div class="print-name" style="margin-top:8px">{e(p["nome"])}</div><div class="plan-meta"><span class="plan-time">{weekday_label(p["inizio"])} {p["inizio"].strftime("%d/%m · %H:%M")}–{end_label}</span> · {duration_label(p["durata"])} · {grams(p["totale"])} g previsti</div></div>')
             move, complete, queue_again, remove = st.columns(4)
             if move.button('Sposta', icon=':material/edit_calendar:', key=f'move_plan_{p["key"]}', width='stretch'):
                 st.session_state['editor'] = ('schedule', p['key'])
             if complete.button('Completa', icon=':material/check_circle:', key=f'complete_plan_{p["key"]}', type='primary', width='stretch'):
                 st.session_state['editor'] = ('complete', p['key'])
             if queue_again.button('In coda', icon=':material/undo:', key=f'unschedule_plan_{p["key"]}', width='stretch'):
+                st.session_state['calendar_nonce'] = st.session_state.get('calendar_nonce', 0) + 1
                 commit(lambda key=p['key']: unschedule_planned_print(wb, key), f'«{p["nome"]}» rimessa nella coda.')
             if remove.button('Elimina', icon=':material/delete:', key=f'delete_scheduled_{p["key"]}', width='stretch'):
                 commit(lambda key=p['key']: delete_planned_print(wb, key), f'«{p["nome"]}» rimossa dalla pianificazione.')
@@ -744,6 +916,10 @@ if 'editor' in st.session_state:
     elif kind == 'schedule':
         target = next((p for p in plans if p['key'] == identifier), None)
         if target: schedule_print_dialog(target)
+        else: close_editor()
+    elif kind == 'priority':
+        target = next((p for p in plans if p['key'] == identifier), None)
+        if target: priority_dialog(target)
         else: close_editor()
     elif kind == 'complete':
         target = next((p for p in plans if p['key'] == identifier), None)

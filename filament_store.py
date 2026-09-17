@@ -1,6 +1,6 @@
 """Workbook operations shared by the dashboard and its tests."""
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from pathlib import Path
 from uuid import uuid4
 from filament_lock import file_lock
@@ -13,9 +13,12 @@ from openpyxl import load_workbook
 
 FILE = Path(__file__).resolve().parent / 'Tracker_Filament_Dashboard.xlsx'
 PLANNING_SHEET = 'Pianificazione'
+PLANNING_PRIORITIES = ('SUBITO', 'Urgente', 'Quando possibile')
+PLANNING_PRIORITY_RANK = {'SUBITO': 3, 'Urgente': 2, 'Quando possibile': 1}
 PLANNING_HEADERS = [
     'ID Pianificazione', 'Nome stampa', 'Durata (min)', 'Inizio previsto',
     'Ugello', 'ID Bobina', 'Materiale', 'Grammi previsti', 'Note', 'Creata il',
+    'Priorità',
 ]
 
 
@@ -105,6 +108,16 @@ def _duration(value, required=False):
     return minutes
 
 
+def planning_priority(value):
+    if value in (None, ''):
+        return 'Quando possibile'
+    normalized = str(value).strip().casefold()
+    choices = {priority.casefold(): priority for priority in PLANNING_PRIORITIES}
+    if normalized not in choices:
+        raise ValueError('Scegli una priorità tra SUBITO, Urgente e Quando possibile.')
+    return choices[normalized]
+
+
 def record_print(wb, name, consumption, note='', when=None, duration_minutes=None):
     if not name.strip(): raise ValueError('Inserisci il nome della stampa.')
     if any(not math.isfinite(g) or g < 0 for g in consumption.values()):
@@ -191,10 +204,11 @@ def planned_prints(wb):
             except (ValueError, TypeError): created = datetime.min
         try: duration = int(row[2])
         except (ValueError, TypeError): duration = 0
+        priority = planning_priority(row[10] if len(row) > 10 else None)
         item = groups.setdefault(key, dict(
             key=key, nome=str(row[1] or ''), durata=duration, inizio=start,
             note=str(row[8] or ''), creata=created, consumi=[], totale=0.0,
-            rows=[],
+            rows=[], priorita=priority,
         ))
         item['rows'].append(row_number)
         grams = float(row[7] or 0)
@@ -203,12 +217,63 @@ def planned_prints(wb):
             materiale=str(row[6] or ''), grammi=grams,
         ))
         item['totale'] += grams
-    return sorted(groups.values(), key=lambda x: (
-        x['inizio'] is None, x['inizio'] or x['creata'], x['creata'], x['nome'].casefold(),
+    return sorted(groups.values(), key=lambda item: (
+        (0, item['inizio'], item['creata'], item['nome'].casefold())
+        if item['inizio'] is not None else
+        (1, -PLANNING_PRIORITY_RANK[item['priorita']], item['creata'], item['nome'].casefold())
     ))
 
 
-def add_planned_print(wb, name, consumption, duration_minutes, note='', start=None, created=None):
+def suggest_next_print(items, now=None, work_start=time(8, 30), work_end=time(17, 30),
+                       turnaround_minutes=30, workdays=(0, 1, 2, 3, 4)):
+    now = now or datetime.now()
+    scheduled = [item for item in items if item['inizio'] is not None]
+    active = next((item for item in scheduled
+                   if item['inizio'] <= now < item['inizio'] + timedelta(minutes=item['durata'])), None)
+    if active is None:
+        return None
+    active_end = active['inizio'] + timedelta(minutes=active['durata'])
+    future = sorted(
+        (item for item in scheduled
+         if item['key'] != active['key'] and item['inizio'] >= active_end),
+        key=lambda item: item['inizio'],
+    )
+    queued = [item for item in items if item['inizio'] is None and item['durata'] > 0]
+    timeline = [active] + future
+    for index, previous in enumerate(timeline):
+        start = previous['inizio'] + timedelta(minutes=previous['durata'] + turnaround_minutes)
+        next_scheduled = timeline[index + 1] if index + 1 < len(timeline) else None
+        latest_end = (next_scheduled['inizio'] - timedelta(minutes=turnaround_minutes)
+                      if next_scheduled else None)
+        candidates = []
+        for item in queued:
+            end = start + timedelta(minutes=item['durata'])
+            if end.weekday() not in workdays or not work_start <= end.time() <= work_end:
+                continue
+            if latest_end is not None and end > latest_end:
+                continue
+            candidates.append(item)
+        if not candidates:
+            continue
+        candidate = min(candidates, key=lambda item: (
+            -PLANNING_PRIORITY_RANK[planning_priority(item.get('priorita'))],
+            -item['durata'], item['creata'], item['nome'].casefold(), item['key'],
+        ))
+        end = start + timedelta(minutes=candidate['durata'])
+        return {
+            'attiva': active,
+            'precedente': previous,
+            'proposta': candidate,
+            'inizio': start,
+            'fine': end,
+            'prossima_programmata': next_scheduled,
+            'cambio_minuti': turnaround_minutes,
+        }
+    return None
+
+
+def add_planned_print(wb, name, consumption, duration_minutes, note='', start=None, created=None,
+                      priority='Quando possibile'):
     if not name.strip():
         raise ValueError('Inserisci il nome della stampa.')
     duration_minutes = _duration(duration_minutes, required=True)
@@ -233,6 +298,7 @@ def add_planned_print(wb, name, consumption, duration_minutes, note='', start=No
         if grams > b['rim']:
             raise ValueError(f"Ugello {n} · {b['id']}: richiesti {grams:g} g, disponibili {b['rim']:g} g.")
         uses.append((n, b, grams))
+    priority = planning_priority(priority)
     pid, created = str(uuid4()), created or datetime.now()
     if start is not None:
         _check_schedule_overlap(wb, start, duration_minutes)
@@ -240,7 +306,7 @@ def add_planned_print(wb, name, consumption, duration_minutes, note='', start=No
     for n, b, grams in uses:
         ws.append([
             pid, name.strip(), duration_minutes, start, n, b['id'],
-            b['materiale'], grams, note.strip(), created,
+            b['materiale'], grams, note.strip(), created, priority,
         ])
     return pid
 
@@ -280,6 +346,14 @@ def unschedule_planned_print(wb, key):
     ws = wb[PLANNING_SHEET]
     for row in item['rows']:
         ws.cell(row, 4).value = None
+
+
+def update_planned_priority(wb, key, priority):
+    item = _planned(wb, key)
+    priority = planning_priority(priority)
+    ws = _planning_sheet(wb)
+    for row in item['rows']:
+        ws.cell(row, 11, priority)
 
 
 def delete_planned_print(wb, key):

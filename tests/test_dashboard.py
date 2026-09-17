@@ -57,7 +57,13 @@ class DashboardTests(unittest.TestCase):
         )
         self.assertEqual(before, {b['id']: b['usati'] for b in store.bobine(self.wb)})
         self.assertEqual(len(store.planned_prints(self.wb)), 2)
-        self.assertIsNone(next(p for p in store.planned_prints(self.wb) if p['key'] == first)['inizio'])
+        first_plan = next(p for p in store.planned_prints(self.wb) if p['key'] == first)
+        self.assertIsNone(first_plan['inizio'])
+        self.assertEqual(first_plan['priorita'], 'Quando possibile')
+        store.update_planned_priority(self.wb, first, 'urgente')
+        self.assertEqual(next(p for p in store.planned_prints(self.wb) if p['key'] == first)['priorita'], 'Urgente')
+        with self.assertRaisesRegex(ValueError, 'priorità'):
+            store.update_planned_priority(self.wb, first, 'Non valida')
 
         start = datetime(2026, 1, 5, 8)
         store.schedule_planned_print(self.wb, first, start)
@@ -95,6 +101,64 @@ class DashboardTests(unittest.TestCase):
             ])
         self.assertEqual(before, {b['id']: b['usati'] for b in store.bobine(self.wb)})
         self.assertEqual(len(store.planned_prints(self.wb)), 1)
+
+    def test_optimized_suggestion_respects_work_hours_and_turnaround(self):
+        monday = datetime(2026, 1, 5, 8, 30)
+        store.add_planned_print(self.wb, 'Attiva', {1: 5, 2: 0, 3: 0}, 90, start=monday)
+        optimal = store.add_planned_print(self.wb, 'Ottimale', {1: 5, 2: 0, 3: 0}, 300)
+        store.add_planned_print(self.wb, 'Troppo lunga', {1: 5, 2: 0, 3: 0}, 420)
+        store.add_planned_print(self.wb, 'Breve', {1: 5, 2: 0, 3: 0}, 60)
+        store.add_planned_print(self.wb, 'Già fissata', {1: 5, 2: 0, 3: 0}, 60,
+                                start=datetime(2026, 1, 5, 16, 30))
+        suggestion = store.suggest_next_print(store.planned_prints(self.wb), now=datetime(2026, 1, 5, 9))
+        self.assertEqual(suggestion['proposta']['key'], optimal)
+        self.assertEqual(suggestion['inizio'], datetime(2026, 1, 5, 10, 30))
+        self.assertEqual(suggestion['fine'], datetime(2026, 1, 5, 15, 30))
+        self.assertEqual(suggestion['prossima_programmata']['nome'], 'Già fissata')
+        self.assertIsNone(store.suggest_next_print(store.planned_prints(self.wb), now=datetime(2026, 1, 5, 7)))
+
+    def test_optimized_suggestion_prefers_priority_then_duration(self):
+        monday = datetime(2026, 1, 5, 8, 30)
+        store.add_planned_print(self.wb, 'Attiva', {1: 5, 2: 0, 3: 0}, 60, start=monday)
+        store.add_planned_print(
+            self.wb, 'Lunga ma normale', {1: 5, 2: 0, 3: 0}, 300,
+            priority='Quando possibile',
+        )
+        urgent = store.add_planned_print(
+            self.wb, 'Urgente', {1: 5, 2: 0, 3: 0}, 180, priority='Urgente',
+        )
+        immediate = store.add_planned_print(
+            self.wb, 'Subito', {1: 5, 2: 0, 3: 0}, 60, priority='SUBITO',
+        )
+        plans = store.planned_prints(self.wb)
+        suggestion = store.suggest_next_print(plans, now=datetime(2026, 1, 5, 9))
+        self.assertEqual(suggestion['proposta']['key'], immediate)
+        self.assertEqual([p['priorita'] for p in plans if p['inizio'] is None], [
+            'SUBITO', 'Urgente', 'Quando possibile',
+        ])
+
+        store.update_planned_priority(self.wb, urgent, 'SUBITO')
+        suggestion = store.suggest_next_print(store.planned_prints(self.wb), now=datetime(2026, 1, 5, 9))
+        self.assertEqual(suggestion['proposta']['key'], urgent)
+
+    def test_optimized_suggestion_continues_after_an_accepted_proposal(self):
+        monday = datetime(2026, 1, 5, 8, 30)
+        store.add_planned_print(self.wb, 'Attiva', {1: 5, 2: 0, 3: 0}, 60, start=monday)
+        first = store.add_planned_print(
+            self.wb, 'Prima proposta', {1: 5, 2: 0, 3: 0}, 240, priority='SUBITO',
+        )
+        second = store.add_planned_print(
+            self.wb, 'Seconda proposta', {1: 5, 2: 0, 3: 0}, 120, priority='Urgente',
+        )
+        suggestion = store.suggest_next_print(store.planned_prints(self.wb), now=datetime(2026, 1, 5, 9))
+        self.assertEqual(suggestion['proposta']['key'], first)
+        store.schedule_planned_print(self.wb, first, suggestion['inizio'])
+
+        follow_up = store.suggest_next_print(store.planned_prints(self.wb), now=datetime(2026, 1, 5, 9))
+        self.assertEqual(follow_up['proposta']['key'], second)
+        self.assertEqual(follow_up['precedente']['key'], first)
+        self.assertEqual(follow_up['inizio'], datetime(2026, 1, 5, 14, 30))
+        self.assertEqual(follow_up['fine'], datetime(2026, 1, 5, 16, 30))
 
     def test_setup_and_exhaustion(self):
         with self.assertRaises(ValueError): store.set_assignments(self.wb, {1:'B001',2:'B001',3:''})
@@ -260,6 +324,30 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(store.history(original_load(self.path)), [])
             self.assertEqual(store.bobine(original_load(self.path))[0]['usati'], 4800)
 
+    def test_overview_shows_active_and_next_print(self):
+        now = datetime.now().replace(second=0, microsecond=0)
+        store.add_planned_print(
+            self.wb, 'Stampa attiva test', {1: 5, 2: 0, 3: 0}, 60,
+            start=now - timedelta(minutes=15), priority='SUBITO',
+        )
+        store.add_planned_print(
+            self.wb, 'Stampa successiva test', {1: 5, 2: 0, 3: 0}, 90,
+            start=now + timedelta(minutes=60), priority='Urgente',
+        )
+        store.save(self.wb, self.path)
+        original_load, original_save = store.load, store.save
+        with patch.object(store, 'FILE', self.path), \
+             patch.object(store, 'load', side_effect=lambda: original_load(self.path)), \
+             patch.object(store, 'save', side_effect=lambda wb: original_save(wb, self.path)):
+            app = AppTest.from_file(str(ROOT / 'filament_dashboard.py')).run()
+            self.assertFalse(app.exception)
+            self.assertEqual(app.subheader[0].value, 'Produzione')
+            markup = ' '.join(block.value for block in app.markdown)
+            self.assertIn('STAMPA IN CORSO', markup)
+            self.assertIn('Stampa attiva test', markup)
+            self.assertIn('STAMPA SUCCESSIVA', markup)
+            self.assertIn('Stampa successiva test', markup)
+
     def test_all_pages_and_print_submission(self):
         original_load, original_save = store.load, store.save
         with patch.object(store, 'FILE', self.path), patch.object(store, 'load', side_effect=lambda: original_load(self.path)), patch.object(store, 'save', side_effect=lambda wb: original_save(wb, self.path)):
@@ -287,14 +375,28 @@ class DashboardTests(unittest.TestCase):
             app.sidebar.radio[0].set_value('Nuova stampa').run()
             next(x for x in app.radio if x.label == 'Stato della stampa').set_value('Da programmare').run()
             app.text_input(key='print_name').set_value('Da calendarizzare')
+            app.radio(key='print_priority').set_value('SUBITO')
             app.number_input(key='cons_1_B001').set_value(8)
             next(b for b in app.button if b.label == 'Aggiungi alla coda di pianificazione').click().run()
             self.assertFalse(app.exception)
             self.assertEqual(app.sidebar.radio[0].value, 'Pianificazione')
+            self.assertEqual(
+                [heading.value for heading in app.subheader],
+                ['Stampe da pianificare', 'Calendario settimanale', 'Stampe in calendario'],
+            )
             queued = store.planned_prints(original_load(self.path))
             self.assertEqual(len(queued), 1)
-            self.assertEqual((queued[0]['nome'], queued[0]['durata'], queued[0]['inizio']), ('Da calendarizzare', 60, None))
+            self.assertEqual(
+                (queued[0]['nome'], queued[0]['durata'], queued[0]['inizio'], queued[0]['priorita']),
+                ('Da calendarizzare', 60, None, 'SUBITO'),
+            )
             self.assertEqual(store.bobine(original_load(self.path))[0]['usati'], 4900)
+
+            app.button(key=f'priority_plan_{queued[0]["key"]}').click().run()
+            app.radio(key=f'priority_value_{queued[0]["key"]}').set_value('Urgente')
+            next(b for b in app.button if b.label == 'Salva priorità').click().run()
+            self.assertFalse(app.exception)
+            self.assertEqual(store.planned_prints(original_load(self.path))[0]['priorita'], 'Urgente')
 
             app.button(key=f'schedule_{queued[0]["key"]}').click().run()
             self.assertFalse(app.exception)
@@ -304,6 +406,20 @@ class DashboardTests(unittest.TestCase):
             self.assertFalse(app.exception)
             scheduled = store.planned_prints(original_load(self.path))[0]
             self.assertEqual(scheduled['inizio'].time(), time(9, 0))
+
+            calendar_key = app.get('component_instance')[0].key
+            app.button(key=f'unschedule_plan_{scheduled["key"]}').click().run()
+            self.assertFalse(app.exception)
+            self.assertIsNone(store.planned_prints(original_load(self.path))[0]['inizio'])
+            self.assertEqual(len(app.get('component_instance')), 1)
+            self.assertNotEqual(app.get('component_instance')[0].key, calendar_key)
+
+            app.button(key=f'schedule_{scheduled["key"]}').click().run()
+            app.date_input(key=f'schedule_day_{scheduled["key"]}').set_value(datetime.now().date() + timedelta(days=1))
+            app.time_input(key=f'schedule_time_{scheduled["key"]}').set_value(time(9, 0))
+            next(b for b in app.button if b.label == 'Salva nel calendario').click().run()
+            self.assertFalse(app.exception)
+            scheduled = store.planned_prints(original_load(self.path))[0]
 
             app.button(key=f'complete_plan_{scheduled["key"]}').click().run()
             self.assertFalse(app.exception)
