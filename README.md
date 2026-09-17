@@ -36,9 +36,10 @@ Il blocco dell'archivio usa le funzioni native del sistema operativo. Il workflo
 ## Il flusso quotidiano
 
 1. **Panoramica**: controlla le bobine caricate sui tre ugelli. Apri “Cambia bobine” per assegnare, scambiare o scaricare una bobina. Una bobina può occupare un solo ugello.
-2. **Nuova stampa**: inserisci nome, data e grammi dello slicer per ogni ugello utilizzato. Includi supporti e spurghi; lascia zero sugli ugelli inutilizzati. Controlla il residuo previsto e registra una volta a stampa conclusa.
-3. **Magazzino**: tre colonne ABS, Supporto (anche PVA/BVOH) e Altro, con conteggio e grammi. Cerca per materiale, colore, marca o ID, filtra per posizione e disponibilità e ordina per residuo, grammi, colore o ID. Nell'aggiunta, materiale, marca e colore hanno valori guidati; scegli “Altro” per inserire una voce personalizzata. ABS, 3ntr e Nero sono i valori iniziali. Il pulsante “Elimina” dentro ogni scheda permette di rimuovere una bobina non caricata; “Bobine eliminate” permette di ripristinarla. Le bobine eliminate non contribuiscono alle scorte e conservano ID e dettagli nello storico.
-4. **Storico**: ogni stampa raggruppa i consumi dei diversi ugelli. Le schede mostrano data e ora, consumi per ugello, bobina, materiale, colore, marca e note; puoi anche esportare i consumi in CSV.
+2. **Nuova stampa**: scegli se la stampa è già avvenuta oppure è da programmare, indica la durata e inserisci i grammi dello slicer per ogni ugello utilizzato. Includi supporti e spurghi; lascia zero sugli ugelli inutilizzati. Una stampa conclusa scala subito le scorte, mentre una stampa da programmare entra nella coda senza modificare il magazzino.
+3. **Pianificazione**: inserisci le stampe in coda nel calendario settimanale. Ogni lavoro appare come un blocco alto in proporzione alla durata, può continuare dopo mezzanotte e può essere spostato o rimesso in coda. Gli orari sovrapposti vengono bloccati. Al termine, conferma data e consumi effettivi: solo allora la stampa passa nello storico e aggiorna le bobine. Un avviso segnala quando il fabbisogno complessivo del piano supera il residuo disponibile.
+4. **Magazzino**: tre colonne ABS, Supporto (anche PVA/BVOH) e Altro, con conteggio e grammi. Cerca per materiale, colore, marca o ID, filtra per posizione e disponibilità e ordina per residuo, grammi, colore o ID. Nell'aggiunta, materiale, marca e colore hanno valori guidati; scegli “Altro” per inserire una voce personalizzata. ABS, 3ntr e Nero sono i valori iniziali. Il pulsante “Elimina” dentro ogni scheda permette di rimuovere una bobina non caricata; “Bobine eliminate” permette di ripristinarla. Le bobine eliminate non contribuiscono alle scorte e conservano ID e dettagli nello storico.
+5. **Storico**: ogni stampa raggruppa i consumi dei diversi ugelli. Le schede mostrano data, ora, durata, consumi per ugello, bobina, materiale, colore, marca e note; puoi anche esportare i consumi in CSV.
 
 ## Indicatori
 
@@ -54,7 +55,7 @@ I residui sono stime basate sui consumi inseriti, non misure della stampante.
 
 L'archivio resta `Tracker_Filament_Dashboard.xlsx`. Ogni salvataggio crea `Tracker_Filament_Dashboard.backup.xlsx` con la versione immediatamente precedente e sostituisce l'archivio solo dopo aver completato la scrittura. La copia di sicurezza viene aggiornata a ogni modifica.
 
-Le nuove stampe hanno un identificativo univoco nella colonna aggiuntiva “ID Stampa”. Le righe storiche senza identificativo sono raggruppate per data/ora esatta, nome e note. I dati precedenti vengono conservati. Evitare di modificare contemporaneamente il file in Excel e nella dashboard.
+Le nuove stampe hanno un identificativo univoco nella colonna “ID Stampa” e conservano la durata in minuti. Le righe storiche senza identificativo sono raggruppate per data/ora esatta, nome e note. La prima stampa pianificata crea automaticamente il foglio `Pianificazione`, nel quale una riga rappresenta il consumo previsto di un ugello. I dati precedenti vengono conservati. Evitare di modificare contemporaneamente il file in Excel e nella dashboard.
 
 ## Verifica
 
@@ -62,7 +63,7 @@ Le nuove stampe hanno un identificativo univoco nella colonna aggiuntiva “ID S
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-I test lavorano su copie temporanee dell'archivio e coprono navigazione, registrazione, scorte, assegnazioni e conflitti di salvataggio.
+I test lavorano su copie temporanee dell'archivio e coprono navigazione, registrazione, pianificazione, sovrapposizioni, completamento, scorte, assegnazioni e conflitti di salvataggio.
 
 ## Correggere un inserimento
 

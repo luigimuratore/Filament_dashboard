@@ -1,6 +1,6 @@
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from pathlib import Path
 from unittest.mock import patch
 from openpyxl import Workbook
@@ -44,6 +44,57 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(latest['totale'], 6.5)
         self.assertEqual(len(latest['consumi']), 3)
         self.assertTrue(self.path.with_suffix('.backup.xlsx').exists())
+
+    def test_planning_queue_calendar_and_completion(self):
+        before = {b['id']: b['usati'] for b in store.bobine(self.wb)}
+        first = store.add_planned_print(
+            self.wb, 'Lavoro lungo', {1: 12.5, 2: 6, 3: 0}, 150,
+            'Preparare il piano', created=datetime(2026, 1, 2, 9),
+        )
+        second = store.add_planned_print(
+            self.wb, 'Lavoro breve', {1: 5, 2: 0, 3: 0}, 45,
+            created=datetime(2026, 1, 2, 10),
+        )
+        self.assertEqual(before, {b['id']: b['usati'] for b in store.bobine(self.wb)})
+        self.assertEqual(len(store.planned_prints(self.wb)), 2)
+        self.assertIsNone(next(p for p in store.planned_prints(self.wb) if p['key'] == first)['inizio'])
+
+        start = datetime(2026, 1, 5, 8)
+        store.schedule_planned_print(self.wb, first, start)
+        with self.assertRaisesRegex(ValueError, 'sovrappone'):
+            store.schedule_planned_print(self.wb, second, start + timedelta(hours=1))
+        store.schedule_planned_print(self.wb, second, start + timedelta(minutes=150))
+        store.unschedule_planned_print(self.wb, second)
+        self.assertIsNone(next(p for p in store.planned_prints(self.wb) if p['key'] == second)['inizio'])
+
+        store.complete_planned_print(self.wb, first, datetime(2026, 1, 5, 10, 30), [
+            {'ugello': 1, 'bobina': 'B001', 'grammi': 10},
+            {'ugello': 2, 'bobina': 'B002', 'grammi': 4},
+        ])
+        remaining = store.planned_prints(self.wb)
+        self.assertEqual([p['key'] for p in remaining], [second])
+        completed = store.history(self.wb)[0]
+        self.assertEqual((completed['nome'], completed['durata'], completed['totale']), ('Lavoro lungo', 150, 14))
+        after = {b['id']: b['usati'] for b in store.bobine(self.wb)}
+        self.assertEqual(after['B001'], before['B001'] + 10)
+        self.assertEqual(after['B002'], before['B002'] + 4)
+
+        store.delete_planned_print(self.wb, second)
+        self.assertEqual(store.planned_prints(self.wb), [])
+        store.save(self.wb, self.path)
+        loaded = store.load(self.path)
+        self.assertIn('Pianificazione', loaded.sheetnames)
+        self.assertEqual(store.history(loaded)[0]['durata'], 150)
+
+    def test_planned_completion_is_atomic_when_stock_is_insufficient(self):
+        key = store.add_planned_print(self.wb, 'Troppo materiale', {1: 50, 2: 0, 3: 0}, 60)
+        before = {b['id']: b['usati'] for b in store.bobine(self.wb)}
+        with self.assertRaisesRegex(ValueError, 'disponibili'):
+            store.complete_planned_print(self.wb, key, consumption=[
+                {'ugello': 1, 'bobina': 'B001', 'grammi': 101},
+            ])
+        self.assertEqual(before, {b['id']: b['usati'] for b in store.bobine(self.wb)})
+        self.assertEqual(len(store.planned_prints(self.wb)), 1)
 
     def test_setup_and_exhaustion(self):
         with self.assertRaises(ValueError): store.set_assignments(self.wb, {1:'B001',2:'B001',3:''})
@@ -213,7 +264,7 @@ class DashboardTests(unittest.TestCase):
         with patch.object(store, 'FILE', self.path), patch.object(store, 'load', side_effect=lambda: original_load(self.path)), patch.object(store, 'save', side_effect=lambda wb: original_save(wb, self.path)):
             app = AppTest.from_file(str(ROOT / 'filament_dashboard.py')).run()
             self.assertFalse(app.exception)
-            for page in ['Magazzino','Storico','Nuova stampa']:
+            for page in ['Magazzino','Storico','Pianificazione','Nuova stampa']:
                 app.sidebar.radio[0].set_value(page).run()
                 self.assertFalse(app.exception, page)
             app.text_input(key='print_name').set_value('UI test')
@@ -227,5 +278,39 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(app.number_input(key='cons_1_B001').value, 0)
             self.assertEqual(app.text_input(key='print_name').value, '')
             self.assertTrue(any(p['nome'] == 'UI test' for p in store.history(original_load(self.path))))
+
+    def test_new_print_can_be_sent_to_planning_queue(self):
+        original_load, original_save = store.load, store.save
+        with patch.object(store, 'FILE', self.path), patch.object(store, 'load', side_effect=lambda: original_load(self.path)), patch.object(store, 'save', side_effect=lambda wb: original_save(wb, self.path)):
+            app = AppTest.from_file(str(ROOT / 'filament_dashboard.py')).run()
+            app.sidebar.radio[0].set_value('Nuova stampa').run()
+            next(x for x in app.radio if x.label == 'Stato della stampa').set_value('Da programmare').run()
+            app.text_input(key='print_name').set_value('Da calendarizzare')
+            app.number_input(key='cons_1_B001').set_value(8)
+            next(b for b in app.button if b.label == 'Aggiungi alla coda di pianificazione').click().run()
+            self.assertFalse(app.exception)
+            self.assertEqual(app.sidebar.radio[0].value, 'Pianificazione')
+            queued = store.planned_prints(original_load(self.path))
+            self.assertEqual(len(queued), 1)
+            self.assertEqual((queued[0]['nome'], queued[0]['durata'], queued[0]['inizio']), ('Da calendarizzare', 60, None))
+            self.assertEqual(store.bobine(original_load(self.path))[0]['usati'], 4900)
+
+            app.button(key=f'schedule_{queued[0]["key"]}').click().run()
+            self.assertFalse(app.exception)
+            app.date_input(key=f'schedule_day_{queued[0]["key"]}').set_value(datetime.now().date() + timedelta(days=1))
+            app.time_input(key=f'schedule_time_{queued[0]["key"]}').set_value(time(9, 0))
+            next(b for b in app.button if b.label == 'Salva nel calendario').click().run()
+            self.assertFalse(app.exception)
+            scheduled = store.planned_prints(original_load(self.path))[0]
+            self.assertEqual(scheduled['inizio'].time(), time(9, 0))
+
+            app.button(key=f'complete_plan_{scheduled["key"]}').click().run()
+            self.assertFalse(app.exception)
+            next(b for b in app.button if b.label == 'Completa e aggiorna scorte').click().run()
+            self.assertFalse(app.exception)
+            completed_book = original_load(self.path)
+            self.assertEqual(store.planned_prints(completed_book), [])
+            self.assertEqual(store.history(completed_book)[0]['nome'], 'Da calendarizzare')
+            self.assertEqual(store.bobine(completed_book)[0]['usati'], 4908)
 
 if __name__ == '__main__': unittest.main()

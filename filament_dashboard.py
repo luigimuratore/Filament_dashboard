@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from html import escape
 import csv
 import io
@@ -15,11 +15,21 @@ from filament_sync import (
 
 # An already-running Streamlit session may retain the module from before an update.
 # Reload only when the required inventory API is missing, before importing its names.
-if not all(hasattr(filament_store, name) for name in ('remove_spool', 'restore_spool', 'material_group', 'update_spool', 'update_print', 'delete_print')):
+if not all(hasattr(filament_store, name) for name in (
+        'remove_spool', 'restore_spool', 'material_group', 'update_spool',
+        'update_print', 'delete_print', 'planned_prints', 'add_planned_print',
+        'schedule_planned_print', 'unschedule_planned_print',
+        'complete_planned_print', 'delete_planned_print')):
     importlib.invalidate_caches()
     importlib.reload(filament_store)
 
-from filament_store import FILE, load, save, bobine, assignments, history, health, restock, set_assignments, record_print, add_spool, remove_spool, restore_spool, material_group, update_spool, update_print, delete_print
+from filament_store import (
+    FILE, load, save, bobine, assignments, history, health, restock,
+    set_assignments, record_print, add_spool, remove_spool, restore_spool,
+    material_group, update_spool, update_print, delete_print, planned_prints,
+    add_planned_print, schedule_planned_print, unschedule_planned_print,
+    complete_planned_print, delete_planned_print,
+)
 
 st.set_page_config(page_title='Filament ·  MITIC lab', page_icon='◉', layout='wide')
 st.markdown('''<style>
@@ -54,6 +64,8 @@ button[kind="primary"],button[kind="primaryFormSubmit"]{background:#23725a;borde
 .compact-spool .card-top{margin-bottom:8px}.compact-spool .material{font-size:19px;margin-top:0}.compact-spool .meta{font-size:12px;margin:3px 0 10px}.compact-spool .weight{margin:6px 0}.compact-spool .weight strong{font-size:24px}.compact-spool .status{margin-top:6px;font-size:11px}.compact-spool .track{height:6px}.compact-spool .tag{padding:3px 8px}
 .stock-heading{border-bottom:2px solid #b8cdbd;padding:4px 0 16px;margin-bottom:18px}.stock-heading h2{margin:0;padding-bottom:4px}.nozzle-card{border-top:4px solid #23725a;padding:26px;min-height:315px}.nozzle-card .slot{font-size:32px;letter-spacing:-1px;font-weight:750}.nozzle-card .card-top{margin-bottom:23px}.nozzle-card .material{font-size:23px}.nozzle-card .meta{margin-bottom:28px}
 .print-card{background:white;border:1px solid var(--line);border-radius:14px;padding:22px;margin:12px 0 18px}.print-head{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;margin-bottom:18px}.print-name{font-size:19px;font-weight:700;overflow-wrap:anywhere}.print-date{font-size:12px;color:var(--muted);margin-top:4px}.print-total{text-align:right;white-space:nowrap;font-size:23px;font-weight:700}.print-total small{display:block;font-size:11px;font-weight:400;color:var(--muted)}.print-uses{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.print-use{background:#f5f7f3;border-radius:10px;padding:14px;overflow-wrap:anywhere}.print-use strong{display:block;font-size:15px;margin:9px 0 5px}.print-use .use-grams{font-size:20px;font-weight:700;margin-top:12px}.print-unused{color:#77847b;background:#fafbf9}.print-notes{border-top:1px solid var(--line);margin-top:16px;padding-top:12px;font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}.print-notes span{color:var(--muted)}
+.plan-summary{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin:8px 0 4px}.plan-summary .print-name{font-size:17px}.plan-meta{color:var(--muted);font-size:12px;margin-top:5px;line-height:1.5}.plan-time{font-weight:700;color:var(--green)}
+.calendar-scroll{overflow-x:auto;border:1px solid var(--line);border-radius:16px;background:#fff;margin-top:12px}.calendar{min-width:1040px}.calendar-head{display:grid;grid-template-columns:62px repeat(7,minmax(130px,1fr));position:sticky;top:0;z-index:3;background:#fff;border-bottom:1px solid var(--line)}.calendar-head>div{padding:13px 8px;text-align:center;border-left:1px solid #edf0ec;font-size:12px;color:var(--muted)}.calendar-head b{display:block;color:var(--ink);font-size:14px;margin-top:2px}.calendar-body{display:grid;grid-template-columns:62px repeat(7,minmax(130px,1fr));height:864px}.time-lane,.day-lane{position:relative;background-image:repeating-linear-gradient(to bottom,transparent 0,transparent 35px,#e9eee7 35px,#e9eee7 36px);background-size:100% 36px}.time-lane{background-color:#fafbf9}.hour-label{position:absolute;right:9px;transform:translateY(-7px);font-size:10px;color:var(--muted)}.day-lane{border-left:1px solid #edf0ec}.day-lane.today{background-color:#f6faf6}.calendar-block{position:absolute;left:5px;right:5px;min-height:38px;border-radius:8px;background:#28775f;color:#fff;padding:6px 8px;overflow:hidden;box-shadow:0 2px 7px #173f3326;z-index:2;font-size:10px;line-height:1.25}.calendar-block.alt{background:#486f86}.calendar-block strong{display:block;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.calendar-block span{opacity:.86}.calendar-block.continued{border-top-left-radius:2px;border-top-right-radius:2px}
 @media(max-width:760px){.print-uses{grid-template-columns:1fr}.nozzle-card .slot{font-size:29px}}
 @media(max-width:760px){[data-testid="stMainBlockContainer"]{padding:1.5rem 1rem}h1{font-size:2rem!important}.card{min-height:245px}}
 </style>''', unsafe_allow_html=True)
@@ -62,9 +74,15 @@ button[kind="primary"],button[kind="primaryFormSubmit"]{background:#23725a;borde
 def html(value): st.markdown(value, unsafe_allow_html=True)
 def e(value): return escape(str(value))
 def grams(value): return f'{value:,.1f}'.replace(',', ' ').replace('.0', '').replace('.', ',')
+def duration_label(minutes):
+    hours, minutes = divmod(int(minutes or 0), 60)
+    if hours and minutes: return f'{hours} h {minutes} min'
+    if hours: return f'{hours} h'
+    return f'{minutes} min'
+def weekday_label(value): return ('Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom')[value.weekday()]
 def jump(page): st.session_state['page'] = page
 
-def commit(action, message, reset_print=False, reset_spool=False):
+def commit(action, message, reset_print=False, reset_spool=False, next_page=None):
     try:
         action()
         save(wb)
@@ -75,10 +93,56 @@ def commit(action, message, reset_print=False, reset_spool=False):
         st.session_state['flash'] = message
         if reset_print:
             st.session_state['reset_print'] = True
-            st.session_state['next_page'] = 'Panoramica'
+            st.session_state['next_page'] = next_page or 'Panoramica'
         if reset_spool:
             st.session_state['reset_spool'] = True
         st.rerun()
+
+
+def calendar_html(items, week_start):
+    days = [week_start + timedelta(days=offset) for offset in range(7)]
+    names = ('Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom')
+    header = '<div></div>' + ''.join(
+        f'<div>{names[index]}<b>{day.strftime("%d/%m")}</b></div>'
+        for index, day in enumerate(days)
+    )
+    labels = ''.join(
+        f'<span class="hour-label" style="top:{hour / 24 * 100:.4f}%">{hour:02d}:00</span>'
+        for hour in range(24)
+    )
+    lanes = []
+    today = datetime.now().date()
+    for day in days:
+        day_start = datetime.combine(day, datetime.min.time())
+        day_end = day_start + timedelta(days=1)
+        blocks = []
+        for item in items:
+            start = item['inizio']
+            if start is None:
+                continue
+            end = start + timedelta(minutes=item['durata'])
+            if start >= day_end or end <= day_start:
+                continue
+            segment_start, segment_end = max(start, day_start), min(end, day_end)
+            offset = (segment_start - day_start).total_seconds() / 60
+            length = (segment_end - segment_start).total_seconds() / 60
+            top, height = offset / 1440 * 100, length / 1440 * 100
+            continued = ' continued' if segment_start != start else ''
+            tone = ' alt' if sum(ord(c) for c in item['key']) % 2 else ''
+            time_label = ('↳ continua' if segment_start != start else start.strftime('%H:%M'))
+            title = e(f"{item['nome']} · {start.strftime('%d/%m %H:%M')} · {duration_label(item['durata'])}")
+            blocks.append(
+                f'<div class="calendar-block{tone}{continued}" style="top:{top:.4f}%;height:{height:.4f}%" title="{title}">'
+                f'<strong>{e(item["nome"])}</strong><span>{time_label} · {duration_label(item["durata"])}</span></div>'
+            )
+        today_class = ' today' if day == today else ''
+        lanes.append(f'<div class="day-lane{today_class}">{"".join(blocks)}</div>')
+    html(
+        f'<div class="calendar-scroll"><div class="calendar">'
+        f'<div class="calendar-head">{header}</div>'
+        f'<div class="calendar-body"><div class="time-lane">{labels}</div>{"".join(lanes)}</div>'
+        f'</div></div>'
+    )
 
 
 def spool_card(b, n=None, compact=False):
@@ -114,6 +178,8 @@ def print_card_content(p):
             details.append(f'<strong>{material} / {color}</strong><div class="hint">{e(use["bobina"])} · {brand}</div><div class="use-grams">{grams(use["grammi"])} g</div>')
         uses.append(f'<div class="print-use"><div class="slot">Ugello #{n}</div>{"".join(details)}</div>')
     date = p['data'].strftime('%d/%m/%Y · %H:%M:%S') if p['data'] != datetime.min else 'Data non disponibile'
+    if p.get('durata'):
+        date += f' · durata {duration_label(p["durata"])}'
     count = len({x['ugello'] for x in p['consumi']})
     note = e(p['note']) if p['note'] else '<span>Nessuna nota aggiunta.</span>'
     html(f'<article class="print-card"><div class="print-head"><div><div class="print-name">{e(p["nome"])}</div><div class="print-date">{date} · {count} ugelli utilizzati</div></div><div class="print-total">{grams(p["totale"])} g<small>Consumo totale</small></div></div><div class="print-uses">{"".join(uses)}</div><div class="print-notes"><b>Note</b> · {note}</div></article>')
@@ -152,6 +218,10 @@ def edit_print_dialog(p):
         date_col, time_col = st.columns(2)
         date = date_col.date_input('Data', value=p['data'].date() if p['data'] != datetime.min else datetime.now().date())
         time = time_col.time_input('Ora', value=p['data'].time(), step=60)
+        duration_col, minutes_col = st.columns(2)
+        initial_hours, initial_minutes = divmod(int(p.get('durata') or 0), 60)
+        duration_hours = duration_col.number_input('Durata · ore', min_value=0, value=initial_hours, step=1, key='edit_print_duration_hours')
+        duration_minutes = minutes_col.number_input('Durata · minuti', min_value=0, max_value=59, value=initial_minutes, step=1, key='edit_print_duration_minutes')
         options = list(history_spools)
         st.caption('Puoi cambiare ugello, bobina e grammi, aggiungere righe o rimuoverle. Le bobine eliminate restano selezionabili per correggere le stampe passate.')
         st.caption(' · '.join(f'{b["id"]}: {b["materiale"]} / {b["colore"]}' for b in all_spools))
@@ -171,7 +241,64 @@ def edit_print_dialog(p):
         close_editor()
         st.rerun()
     if submitted:
-        commit(lambda: update_print(wb, p['key'], name, datetime.combine(date, time), note, edited), 'Stampa corretta e scorte aggiornate.')
+        duration = int(duration_hours) * 60 + int(duration_minutes)
+        commit(lambda: update_print(wb, p['key'], name, datetime.combine(date, time), note, edited, duration or None), 'Stampa corretta e scorte aggiornate.')
+
+
+@st.dialog('Inserisci nel calendario', on_dismiss=close_editor)
+def schedule_print_dialog(p):
+    now = datetime.now().replace(second=0, microsecond=0)
+    rounded = now + timedelta(minutes=(15 - now.minute % 15) % 15)
+    initial = p['inizio'] or rounded
+    st.caption(f'«{p["nome"]}» · trova uno spazio libero: il blocco occuperà esattamente la durata indicata.')
+    with st.form(f'schedule_print_form_{p["key"]}'):
+        day_col, time_col = st.columns(2)
+        day = day_col.date_input('Giorno', value=initial.date(), key=f'schedule_day_{p["key"]}')
+        clock = time_col.time_input('Ora di inizio', value=initial.time(), step=900, key=f'schedule_time_{p["key"]}')
+        hours, minutes = divmod(int(p['durata']), 60)
+        hour_col, minute_col = st.columns(2)
+        duration_hours = hour_col.number_input('Durata · ore', min_value=0, value=hours, step=1, key=f'schedule_hours_{p["key"]}')
+        duration_minutes = minute_col.number_input('Durata · minuti', min_value=0, max_value=59, value=minutes, step=1, key=f'schedule_minutes_{p["key"]}')
+        start = datetime.combine(day, clock)
+        duration = int(duration_hours) * 60 + int(duration_minutes)
+        if duration:
+            st.info(f'Fine prevista: {(start + timedelta(minutes=duration)).strftime("%d/%m/%Y alle %H:%M")}')
+        save_action, cancel = st.columns(2)
+        submitted = save_action.form_submit_button('Salva nel calendario', type='primary', width='stretch')
+        cancelled = cancel.form_submit_button('Annulla', width='stretch')
+    if cancelled:
+        close_editor()
+        st.rerun()
+    if submitted:
+        st.session_state['calendar_week_start'] = day - timedelta(days=day.weekday())
+        commit(lambda: schedule_planned_print(wb, p['key'], start, duration), 'Pianificazione aggiornata.')
+
+
+@st.dialog('Completa stampa pianificata', width='large', on_dismiss=close_editor)
+def complete_print_dialog(p):
+    st.caption('Conferma data e consumi effettivi. Solo ora i grammi verranno scalati dalle bobine e la stampa passerà nello storico.')
+    with st.form(f'complete_print_form_{p["key"]}'):
+        now = datetime.now().replace(second=0, microsecond=0)
+        day_col, time_col = st.columns(2)
+        day = day_col.date_input('Data effettiva', value=now.date(), key=f'complete_day_{p["key"]}')
+        clock = time_col.time_input('Ora effettiva', value=now.time(), step=60, key=f'complete_time_{p["key"]}')
+        options = [b['id'] for b in all_spools if not b['eliminata']]
+        actual = st.data_editor(
+            [{'ugello': x['ugello'], 'bobina': str(x['bobina']), 'grammi': x['grammi']} for x in p['consumi']],
+            num_rows='dynamic', hide_index=True, width='stretch', key=f'complete_consumption_{p["key"]}',
+            column_config={
+                'ugello': st.column_config.SelectboxColumn('Ugello', options=[1, 2, 3], required=True),
+                'bobina': st.column_config.SelectboxColumn('Bobina', options=options, required=True),
+                'grammi': st.column_config.NumberColumn('Consumo effettivo (g)', min_value=0.0, step=0.1, required=True),
+            })
+        confirm, cancel = st.columns(2)
+        submitted = confirm.form_submit_button('Completa e aggiorna scorte', type='primary', width='stretch')
+        cancelled = cancel.form_submit_button('Annulla', width='stretch')
+    if cancelled:
+        close_editor()
+        st.rerun()
+    if submitted:
+        commit(lambda: complete_planned_print(wb, p['key'], datetime.combine(day, clock), actual), 'Stampa completata: consumi aggiornati e voce aggiunta allo storico.')
 
 
 def print_card(p, can_delete=False):
@@ -227,7 +354,7 @@ if not st.session_state.get('pull_checked'):
 
 try:
     wb = load()
-    bs = bobine(wb); ass = assignments(wb); prints = history(wb)
+    bs = bobine(wb); ass = assignments(wb); prints = history(wb); plans = planned_prints(wb)
 except (OSError, KeyError, ValueError) as exc:
     st.error(f'Impossibile leggere il magazzino: {exc}')
     st.stop()
@@ -245,7 +372,7 @@ if 'next_page' in st.session_state:
 
 with st.sidebar:
     html('<div class="brand"><span>◉</span> filament<span>.</span></div><div class="kicker">MITIC Lab</div>')
-    st.radio('Workspace', ['Panoramica', 'Nuova stampa', 'Magazzino', 'Storico'], key='page', label_visibility='collapsed')
+    st.radio('Workspace', ['Panoramica', 'Nuova stampa', 'Pianificazione', 'Magazzino', 'Storico'], key='page', label_visibility='collapsed')
     st.divider()
     html(f'<div class="kicker">Stampante / 3 ugelli</div><div class="hint">{loaded} ugelli occupati · {len(warehouse)} bobine di ricambio</div>')
     st.caption('Residuo bobine')
@@ -300,7 +427,9 @@ with st.sidebar:
 
 if st.session_state.pop('reset_print', False):
     for key in list(st.session_state):
-        if key.startswith('cons_') or key in ('print_name', 'print_note'):
+        if key.startswith('cons_') or key in (
+                'print_name', 'print_note', 'print_mode', 'print_duration_hours',
+                'print_duration_minutes'):
             del st.session_state[key]
 
 if st.session_state.pop('reset_spool', False):
@@ -321,6 +450,14 @@ if page == 'Panoramica':
     for n, col in enumerate(st.columns(3), 1):
         with col: spool_card(byid.get(ass.get(n)), n)
     setup()
+    upcoming = [p for p in plans if p['inizio'] is not None and p['inizio'] + timedelta(minutes=p['durata']) >= datetime.now()]
+    if upcoming:
+        next_plan = min(upcoming, key=lambda p: p['inizio'])
+        html(f'<div class="notice"><strong>Prossima stampa: {e(next_plan["nome"])}</strong><br>{next_plan["inizio"].strftime("%d/%m/%Y alle %H:%M")} · {duration_label(next_plan["durata"])}.</div>')
+        st.button('Apri la pianificazione →', on_click=jump, args=('Pianificazione',))
+    elif plans:
+        st.info(f'{len(plans)} stampe in coda da inserire nel calendario.')
+        st.button('Pianifica le stampe →', on_click=jump, args=('Pianificazione',))
     critical = [b for b in bs if b['pct'] <= 20]
     if critical:
         html(f'<div class="notice"><strong>{len(critical)} bobine al 20% o meno.</strong> Controlla i ricambi prima della prossima stampa.</div>')
@@ -338,12 +475,20 @@ if page == 'Panoramica':
 
 elif page == 'Nuova stampa':
     st.title('Dallo slicer al magazzino.')
-    html('<p class="lead">Inserisci i grammi utilizzati da ogni ugello, inclusi supporti e spurghi se indicati dallo slicer.</p>')
+    html('<p class="lead">Registra una stampa conclusa oppure prepara il lavoro e mandalo nella coda di pianificazione.</p>')
     setup()
+    mode = st.radio(
+        'Stato della stampa', ['Già avvenuta', 'Da programmare'], horizontal=True,
+        key='print_mode', help='Le stampe da programmare non scalano il magazzino finché non vengono completate.')
     name = st.text_input('Nome della stampa', placeholder='Es. Supporto sensore · revisione 02', key='print_name')
-    day, clock = st.columns(2)
-    date = day.date_input('Data della stampa', value=datetime.now().date(), max_value=datetime.now().date())
-    time = clock.time_input('Ora', value=datetime.now().time().replace(second=0, microsecond=0))
+    if mode == 'Già avvenuta':
+        day, clock = st.columns(2)
+        date = day.date_input('Data della stampa', value=datetime.now().date(), max_value=datetime.now().date())
+        time = clock.time_input('Ora', value=datetime.now().time().replace(second=0, microsecond=0))
+    duration_hours_col, duration_minutes_col = st.columns(2)
+    duration_hours = duration_hours_col.number_input('Durata · ore', min_value=0, value=1, step=1, key='print_duration_hours')
+    duration_minutes = duration_minutes_col.number_input('Durata · minuti', min_value=0, max_value=59, value=0, step=1, key='print_duration_minutes')
+    duration = int(duration_hours) * 60 + int(duration_minutes)
     cons = {}
     for n, col in enumerate(st.columns(3), 1):
         with col:
@@ -355,9 +500,87 @@ elif page == 'Nuova stampa':
                 if after < 0: st.error(f'Mancano {grams(-after)} g. Controlla consumo o bobina.')
                 else: st.caption(f'Dopo la stampa: {grams(after)} g · {after / b["peso"] * 100 if b["peso"] else 0:.0f}%')
     note = st.text_area('Note (facoltative)', placeholder='Impostazioni, commessa o risultato della stampa.', height=90, key='print_note')
-    st.info(f"Totale da scalare: {grams(sum(cons.values()))} g · {sum(g > 0 for g in cons.values())} ugelli utilizzati. Registra una sola volta, a stampa conclusa.")
-    if st.button('Registra stampa e aggiorna scorte', type='primary', disabled=not loaded):
-        commit(lambda: record_print(wb, name, cons, note, datetime.combine(date, time)), 'Stampa salvata. Consumi e magazzino aggiornati.', reset_print=True)
+    if mode == 'Già avvenuta':
+        st.info(f"Totale da scalare: {grams(sum(cons.values()))} g · {sum(g > 0 for g in cons.values())} ugelli utilizzati. Registra una sola volta, a stampa conclusa.")
+        if st.button('Registra stampa e aggiorna scorte', type='primary', disabled=not loaded or duration <= 0):
+            commit(lambda: record_print(wb, name, cons, note, datetime.combine(date, time), duration), 'Stampa salvata. Consumi e magazzino aggiornati.', reset_print=True)
+    else:
+        st.info(f"Previsione: {duration_label(duration)} · {grams(sum(cons.values()))} g. Verrà aggiunta alla coda senza scalare le bobine.")
+        if st.button('Aggiungi alla coda di pianificazione', type='primary', disabled=not loaded or duration <= 0):
+            commit(lambda: add_planned_print(wb, name, cons, duration, note), 'Stampa aggiunta alla coda. Ora puoi inserirla nel calendario.', reset_print=True, next_page='Pianificazione')
+
+elif page == 'Pianificazione':
+    st.title('La regia delle stampe.')
+    html('<p class="lead">Prepara la coda, assegna un orario e usa i blocchi in calendario per occupare ogni spazio senza sovrapposizioni.</p>')
+    queued = [p for p in plans if p['inizio'] is None]
+    scheduled = [p for p in plans if p['inizio'] is not None]
+    m1, m2, m3 = st.columns(3)
+    m1.metric('Da inserire', len(queued))
+    m2.metric('In calendario', len(scheduled))
+    m3.metric('Tempo pianificato', duration_label(sum(p['durata'] for p in scheduled)))
+
+    demand = {}
+    for plan in plans:
+        for use in plan['consumi']:
+            demand[str(use['bobina'])] = demand.get(str(use['bobina']), 0) + use['grammi']
+    risks = [(bid, grams_needed, history_spools.get(bid, {}).get('rim', 0)) for bid, grams_needed in demand.items()
+             if grams_needed > history_spools.get(bid, {}).get('rim', 0)]
+    if risks:
+        details = ' · '.join(f'{bid}: previsti {grams(need)} g, disponibili {grams(available)} g' for bid, need, available in risks)
+        st.warning(f'Il piano complessivo supera la disponibilità di alcune bobine. {details}')
+
+    st.subheader('Coda da pianificare')
+    if not queued:
+        st.success('La coda è vuota: tutte le stampe sono state inserite nel calendario.')
+    for p in queued:
+        with st.container(border=True, key=f'queue_card_{p["key"]}'):
+            info, action = st.columns([4, 1.4])
+            with info:
+                html(f'<div class="plan-summary"><div class="print-name">{e(p["nome"])}</div><div class="plan-meta">{duration_label(p["durata"])} · {grams(p["totale"])} g previsti · {len(p["consumi"])} ugelli</div></div>')
+            with action:
+                if st.button('Pianifica', icon=':material/calendar_add_on:', key=f'schedule_{p["key"]}', type='primary', width='stretch'):
+                    st.session_state['editor'] = ('schedule', p['key'])
+                if st.button('Elimina', icon=':material/delete:', key=f'delete_plan_{p["key"]}', width='stretch'):
+                    commit(lambda key=p['key']: delete_planned_print(wb, key), f'«{p["nome"]}» rimossa dalla pianificazione.')
+
+    st.subheader('Calendario settimanale')
+    default_week = datetime.now().date() - timedelta(days=datetime.now().date().weekday())
+    week_start = st.session_state.get('calendar_week_start', default_week)
+    if isinstance(week_start, datetime):
+        week_start = week_start.date()
+    previous, current, following, title_col = st.columns([1, 1, 1, 5])
+    if previous.button('← Settimana', key='previous_week', width='stretch'):
+        st.session_state['calendar_week_start'] = week_start - timedelta(days=7)
+        st.rerun()
+    if current.button('Oggi', key='current_week', width='stretch'):
+        st.session_state['calendar_week_start'] = default_week
+        st.rerun()
+    if following.button('Settimana →', key='next_week', width='stretch'):
+        st.session_state['calendar_week_start'] = week_start + timedelta(days=7)
+        st.rerun()
+    title_col.markdown(f'**{week_start.strftime("%d/%m/%Y")} – {(week_start + timedelta(days=6)).strftime("%d/%m/%Y")}**')
+    visible_week = [p for p in scheduled if p['inizio'] < datetime.combine(week_start + timedelta(days=7), datetime.min.time())
+                    and p['inizio'] + timedelta(minutes=p['durata']) > datetime.combine(week_start, datetime.min.time())]
+    calendar_html(visible_week, week_start)
+    st.caption('Ogni blocco ha altezza proporzionale alla durata. Le stampe che proseguono dopo mezzanotte continuano nel giorno successivo.')
+
+    st.subheader('Stampe in calendario')
+    if not scheduled:
+        st.info('Nessuna stampa calendarizzata. Usa “Pianifica” su una voce della coda.')
+    for p in scheduled:
+        end = p['inizio'] + timedelta(minutes=p['durata'])
+        end_label = end.strftime('%H:%M') if end.date() == p['inizio'].date() else end.strftime('%d/%m · %H:%M')
+        with st.container(border=True, key=f'scheduled_card_{p["key"]}'):
+            html(f'<div class="plan-summary"><div class="print-name">{e(p["nome"])}</div><div class="plan-meta"><span class="plan-time">{weekday_label(p["inizio"])} {p["inizio"].strftime("%d/%m · %H:%M")}–{end_label}</span> · {duration_label(p["durata"])} · {grams(p["totale"])} g previsti</div></div>')
+            move, complete, queue_again, remove = st.columns(4)
+            if move.button('Sposta', icon=':material/edit_calendar:', key=f'move_plan_{p["key"]}', width='stretch'):
+                st.session_state['editor'] = ('schedule', p['key'])
+            if complete.button('Completa', icon=':material/check_circle:', key=f'complete_plan_{p["key"]}', type='primary', width='stretch'):
+                st.session_state['editor'] = ('complete', p['key'])
+            if queue_again.button('In coda', icon=':material/undo:', key=f'unschedule_plan_{p["key"]}', width='stretch'):
+                commit(lambda key=p['key']: unschedule_planned_print(wb, key), f'«{p["nome"]}» rimessa nella coda.')
+            if remove.button('Elimina', icon=':material/delete:', key=f'delete_scheduled_{p["key"]}', width='stretch'):
+                commit(lambda key=p['key']: delete_planned_print(wb, key), f'«{p["nome"]}» rimossa dalla pianificazione.')
 
 elif page == 'Magazzino':
     st.title('Il tuo magazzino.')
@@ -458,7 +681,7 @@ elif page == 'Storico':
         export = []
         for p in visible:
             for use in p['consumi']:
-                export.append({'Data': p['data'].isoformat(sep=' ', timespec='seconds'), 'Stampa': p['nome'], 'Ugello': use['ugello'], 'Bobina': use['bobina'], 'Materiale': use['materiale'], 'Colore': history_spools.get(str(use['bobina']), {}).get('colore', ''), 'Marca': history_spools.get(str(use['bobina']), {}).get('marca', ''), 'Grammi': use['grammi'], 'Note': p['note']})
+                export.append({'Data': p['data'].isoformat(sep=' ', timespec='seconds'), 'Stampa': p['nome'], 'Durata (min)': p.get('durata') or '', 'Ugello': use['ugello'], 'Bobina': use['bobina'], 'Materiale': use['materiale'], 'Colore': history_spools.get(str(use['bobina']), {}).get('colore', ''), 'Marca': history_spools.get(str(use['bobina']), {}).get('marca', ''), 'Grammi': use['grammi'], 'Note': p['note']})
         st.download_button('Esporta consumi CSV', csv_bytes(export), 'storico_consumi.csv', 'text/csv')
         pages = max(1, (len(visible) + 19) // 20)
         number = st.number_input('Pagina (20 stampe)', min_value=1, max_value=pages, value=1, step=1)
@@ -474,7 +697,15 @@ if 'editor' in st.session_state:
         target = history_spools.get(identifier)
         if target: edit_spool_dialog(target)
         else: close_editor()
-    else:
+    elif kind == 'print':
         target = next((p for p in prints if p['key'] == identifier), None)
         if target: edit_print_dialog(target)
+        else: close_editor()
+    elif kind == 'schedule':
+        target = next((p for p in plans if p['key'] == identifier), None)
+        if target: schedule_print_dialog(target)
+        else: close_editor()
+    elif kind == 'complete':
+        target = next((p for p in plans if p['key'] == identifier), None)
+        if target: complete_print_dialog(target)
         else: close_editor()

@@ -1,6 +1,6 @@
 """Workbook operations shared by the dashboard and its tests."""
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 from filament_lock import file_lock
@@ -12,6 +12,11 @@ import tempfile
 from openpyxl import load_workbook
 
 FILE = Path(__file__).resolve().parent / 'Tracker_Filament_Dashboard.xlsx'
+PLANNING_SHEET = 'Pianificazione'
+PLANNING_HEADERS = [
+    'ID Pianificazione', 'Nome stampa', 'Durata (min)', 'Inizio previsto',
+    'Ugello', 'ID Bobina', 'Materiale', 'Grammi previsti', 'Note', 'Creata il',
+]
 
 
 def load(path=FILE):
@@ -88,7 +93,19 @@ def set_assignments(wb, choices):
     sync_states(wb)
 
 
-def record_print(wb, name, consumption, note='', when=None):
+def _duration(value, required=False):
+    if value is None and not required:
+        return None
+    try:
+        minutes = int(value)
+    except (ValueError, TypeError, OverflowError):
+        raise ValueError('Inserisci una durata valida in ore e minuti.')
+    if minutes <= 0:
+        raise ValueError('La durata deve essere maggiore di zero.')
+    return minutes
+
+
+def record_print(wb, name, consumption, note='', when=None, duration_minutes=None):
     if not name.strip(): raise ValueError('Inserisci il nome della stampa.')
     if any(not math.isfinite(g) or g < 0 for g in consumption.values()):
         raise ValueError('I consumi devono essere numeri positivi o zero.')
@@ -103,14 +120,16 @@ def record_print(wb, name, consumption, note='', when=None):
         b = bs.get(ass.get(n))
         if not b: raise ValueError(f'Ugello {n}: carica una bobina prima di inserire il consumo.')
         if g > b['rim']: raise ValueError(f"Ugello {n} · {b['id']}: richiesti {g:g} g, disponibili {b['rim']:g} g.")
+    duration_minutes = _duration(duration_minutes)
     now, pid = when or datetime.now(), str(uuid4())
     ws = wb['Stampe']
     ws.cell(1, 8, 'ID Stampa')
+    ws.cell(1, 9, 'Durata (min)')
     for n, g in consumption.items():
         if g <= 0: continue
         b = bs[ass[n]]
         wb['Bobine'].cell(b['row'], 6, b['usati'] + g)
-        ws.append([now, name.strip(), n, b['id'], b['materiale'], g, note.strip(), pid])
+        ws.append([now, name.strip(), n, b['id'], b['materiale'], g, note.strip(), pid, duration_minutes])
     sync_states(wb)
 
 
@@ -124,12 +143,198 @@ def history(wb):
             try: date = datetime.fromisoformat(str(raw))
             except (ValueError, TypeError): date = datetime.min
         key = row[7] if len(row) > 7 and row[7] else (str(raw), row[1], row[6])
-        item = groups.setdefault(key, dict(data=date, nome=str(row[1] or ''), note=str(row[6] or ''), consumi=[], totale=0.0, rows=[], key=str(row[7]) if len(row) > 7 and row[7] else f'legacy-{row_number}'))
+        duration = None
+        if len(row) > 8 and row[8] not in (None, ''):
+            try: duration = int(row[8])
+            except (ValueError, TypeError): pass
+        item = groups.setdefault(key, dict(data=date, nome=str(row[1] or ''), note=str(row[6] or ''), durata=duration, consumi=[], totale=0.0, rows=[], key=str(row[7]) if len(row) > 7 and row[7] else f'legacy-{row_number}'))
         item['rows'].append(row_number)
         grams = float(row[5] or 0)
         item['consumi'].append(dict(ugello=row[2], bobina=row[3], materiale=row[4], grammi=grams))
         item['totale'] += grams
     return sorted(groups.values(), key=lambda x: x['data'], reverse=True)
+
+
+def _planning_sheet(wb):
+    if PLANNING_SHEET not in wb.sheetnames:
+        ws = wb.create_sheet(PLANNING_SHEET)
+        ws.append(PLANNING_HEADERS)
+        ws.freeze_panes = 'A2'
+        return ws
+    ws = wb[PLANNING_SHEET]
+    for column, heading in enumerate(PLANNING_HEADERS, 1):
+        ws.cell(1, column, heading)
+    return ws
+
+
+def planned_prints(wb):
+    if PLANNING_SHEET not in wb.sheetnames:
+        return []
+    groups = {}
+    for row_number, row in enumerate(wb[PLANNING_SHEET].iter_rows(min_row=2, values_only=True), 2):
+        if not row[0]:
+            continue
+        key = str(row[0])
+        raw_start = row[3]
+        if isinstance(raw_start, datetime):
+            start = raw_start
+        elif raw_start:
+            try: start = datetime.fromisoformat(str(raw_start))
+            except (ValueError, TypeError): start = None
+        else:
+            start = None
+        raw_created = row[9] if len(row) > 9 else None
+        if isinstance(raw_created, datetime):
+            created = raw_created
+        else:
+            try: created = datetime.fromisoformat(str(raw_created))
+            except (ValueError, TypeError): created = datetime.min
+        try: duration = int(row[2])
+        except (ValueError, TypeError): duration = 0
+        item = groups.setdefault(key, dict(
+            key=key, nome=str(row[1] or ''), durata=duration, inizio=start,
+            note=str(row[8] or ''), creata=created, consumi=[], totale=0.0,
+            rows=[],
+        ))
+        item['rows'].append(row_number)
+        grams = float(row[7] or 0)
+        item['consumi'].append(dict(
+            ugello=int(row[4]), bobina=str(row[5] or ''),
+            materiale=str(row[6] or ''), grammi=grams,
+        ))
+        item['totale'] += grams
+    return sorted(groups.values(), key=lambda x: (
+        x['inizio'] is None, x['inizio'] or x['creata'], x['creata'], x['nome'].casefold(),
+    ))
+
+
+def add_planned_print(wb, name, consumption, duration_minutes, note='', start=None, created=None):
+    if not name.strip():
+        raise ValueError('Inserisci il nome della stampa.')
+    duration_minutes = _duration(duration_minutes, required=True)
+    if start is not None and not isinstance(start, datetime):
+        raise ValueError('Inserisci una data e un’ora valide.')
+    if any(not math.isfinite(g) or g < 0 for g in consumption.values()):
+        raise ValueError('I consumi previsti devono essere numeri positivi o zero.')
+    if sum(consumption.values()) <= 0:
+        raise ValueError('Inserisci un consumo previsto maggiore di zero per almeno un ugello.')
+    ass = assignments(wb)
+    bids = [x for x in ass.values() if x]
+    if len(bids) != len(set(bids)):
+        raise ValueError('La stessa bobina è assegnata a più ugelli. Correggi il setup prima di programmare.')
+    bs = {b['id']: b for b in bobine(wb)}
+    uses = []
+    for n, grams in consumption.items():
+        if grams <= 0:
+            continue
+        b = bs.get(ass.get(n))
+        if not b:
+            raise ValueError(f'Ugello {n}: carica una bobina prima di inserire il consumo previsto.')
+        if grams > b['rim']:
+            raise ValueError(f"Ugello {n} · {b['id']}: richiesti {grams:g} g, disponibili {b['rim']:g} g.")
+        uses.append((n, b, grams))
+    pid, created = str(uuid4()), created or datetime.now()
+    if start is not None:
+        _check_schedule_overlap(wb, start, duration_minutes)
+    ws = _planning_sheet(wb)
+    for n, b, grams in uses:
+        ws.append([
+            pid, name.strip(), duration_minutes, start, n, b['id'],
+            b['materiale'], grams, note.strip(), created,
+        ])
+    return pid
+
+
+def _planned(wb, key):
+    item = next((p for p in planned_prints(wb) if p['key'] == key), None)
+    if not item:
+        raise ValueError('Stampa pianificata non trovata. Ricarica la pagina.')
+    return item
+
+
+def _check_schedule_overlap(wb, start, duration_minutes, exclude=None):
+    end = start + timedelta(minutes=duration_minutes)
+    for other in planned_prints(wb):
+        if other['key'] == exclude or other['inizio'] is None:
+            continue
+        other_end = other['inizio'] + timedelta(minutes=other['durata'])
+        if start < other_end and end > other['inizio']:
+            label = other['inizio'].strftime('%d/%m %H:%M')
+            raise ValueError(f'L’orario si sovrappone a «{other["nome"]}» ({label}). Scegli uno spazio libero.')
+
+
+def schedule_planned_print(wb, key, start, duration_minutes=None):
+    item = _planned(wb, key)
+    if not isinstance(start, datetime):
+        raise ValueError('Inserisci una data e un’ora valide.')
+    duration_minutes = _duration(duration_minutes if duration_minutes is not None else item['durata'], required=True)
+    _check_schedule_overlap(wb, start, duration_minutes, exclude=key)
+    ws = wb[PLANNING_SHEET]
+    for row in item['rows']:
+        ws.cell(row, 3, duration_minutes)
+        ws.cell(row, 4, start)
+
+
+def unschedule_planned_print(wb, key):
+    item = _planned(wb, key)
+    ws = wb[PLANNING_SHEET]
+    for row in item['rows']:
+        ws.cell(row, 4).value = None
+
+
+def delete_planned_print(wb, key):
+    item = _planned(wb, key)
+    ws = wb[PLANNING_SHEET]
+    for row in item['rows']:
+        for cell in ws[row]:
+            cell.value = None
+
+
+def complete_planned_print(wb, key, when=None, consumption=None):
+    item = _planned(wb, key)
+    when = when or datetime.now()
+    if not isinstance(when, datetime):
+        raise ValueError('Inserisci una data e un’ora valide.')
+    rows = item['consumi'] if consumption is None else consumption
+    bs = {b['id']: b for b in bobine(wb, include_removed=True)}
+    uses, requested = [], defaultdict(float)
+    for use in rows:
+        try:
+            nozzle = int(use['ugello'])
+            bid = str(use['bobina'])
+            grams = float(use['grammi'])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            raise ValueError('Controlla ugello, bobina e grammi di ogni riga.')
+        if nozzle not in (1, 2, 3):
+            raise ValueError('Scegli un ugello tra 1, 2 e 3.')
+        if not math.isfinite(grams) or grams < 0:
+            raise ValueError('I grammi devono essere positivi o zero.')
+        if grams == 0:
+            continue
+        spool = bs.get(bid)
+        if not spool or spool['eliminata']:
+            raise ValueError(f'Bobina {bid} non disponibile: correggi il piano prima di completare la stampa.')
+        requested[bid] += grams
+        uses.append((nozzle, spool, grams))
+    if not uses:
+        raise ValueError('La stampa deve contenere almeno un consumo maggiore di zero.')
+    for bid, grams in requested.items():
+        if grams > bs[bid]['rim']:
+            raise ValueError(f'{bid}: richiesti {grams:g} g, disponibili {bs[bid]["rim"]:g} g.')
+    for bid, grams in requested.items():
+        spool = bs[bid]
+        wb['Bobine'].cell(spool['row'], 6, spool['usati'] + grams)
+    pid = str(uuid4())
+    ws = wb['Stampe']
+    ws.cell(1, 8, 'ID Stampa')
+    ws.cell(1, 9, 'Durata (min)')
+    for nozzle, spool, grams in uses:
+        ws.append([
+            when, item['nome'], nozzle, spool['id'], spool['materiale'], grams,
+            item['note'], pid, item['durata'],
+        ])
+    delete_planned_print(wb, key)
+    sync_states(wb)
 
 
 def add_spool(wb, material, brand, color, weight):
@@ -209,11 +414,12 @@ def update_spool(wb, bid, material, brand, color, weight, used):
     sync_states(wb)
 
 
-def update_print(wb, key, name, when, note, consumption):
+def update_print(wb, key, name, when, note, consumption, duration_minutes=None):
     original = next((p for p in history(wb) if p['key'] == key), None)
     if not original: raise ValueError('Stampa non trovata. Ricarica lo storico.')
     if not name.strip(): raise ValueError('Inserisci il nome della stampa.')
     if not isinstance(when, datetime): raise ValueError('Inserisci data e ora valide.')
+    duration_minutes = original.get('durata') if duration_minutes is None else _duration(duration_minutes)
     bs = {b['id']: b for b in bobine(wb, include_removed=True)}
     old, new = defaultdict(float), defaultdict(float)
     for x in original['consumi']: old[str(x['bobina'])] += x['grammi']
@@ -244,8 +450,9 @@ def update_print(wb, key, name, when, note, consumption):
     ws = wb['Stampe']
     pid = ws.cell(original['rows'][0], 8).value or str(uuid4())
     ws.cell(1, 8, 'ID Stampa')
+    ws.cell(1, 9, 'Durata (min)')
     for index, use in enumerate(rows):
-        values = [when, name.strip(), *use, note.strip(), pid]
+        values = [when, name.strip(), *use, note.strip(), pid, duration_minutes]
         if index < len(original['rows']):
             for c, value in enumerate(values, 1): ws.cell(original['rows'][index], c).value = value
         else: ws.append(values)
