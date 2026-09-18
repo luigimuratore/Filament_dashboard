@@ -69,6 +69,7 @@ button[kind="primary"],button[kind="primaryFormSubmit"]{background:#23725a;borde
 .print-card{background:white;border:1px solid var(--line);border-radius:14px;padding:22px;margin:12px 0 18px}.print-head{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;margin-bottom:18px}.print-name{font-size:19px;font-weight:700;overflow-wrap:anywhere}.print-date{font-size:12px;color:var(--muted);margin-top:4px}.print-total{text-align:right;white-space:nowrap;font-size:23px;font-weight:700}.print-total small{display:block;font-size:11px;font-weight:400;color:var(--muted)}.print-uses{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.print-use{background:#f5f7f3;border-radius:10px;padding:14px;overflow-wrap:anywhere}.print-use strong{display:block;font-size:15px;margin:9px 0 5px}.print-use .use-grams{font-size:20px;font-weight:700;margin-top:12px}.print-unused{color:#77847b;background:#fafbf9}.print-notes{border-top:1px solid var(--line);margin-top:16px;padding-top:12px;font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}.print-notes span{color:var(--muted)}
 .plan-summary{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin:8px 0 4px}.plan-summary .print-name{font-size:17px}.plan-meta{color:var(--muted);font-size:12px;margin-top:5px;line-height:1.5}.plan-time{font-weight:700;color:var(--green)}
 .efficient-suggestion{background:linear-gradient(135deg,#fff8df 0%,#fffdf5 100%);border:2px solid #d8a01f;box-shadow:0 5px 18px #8c64151c}.efficient-suggestion .plan-time{color:#8a5c00}.efficiency-badge{display:inline-block;background:#d8a01f;color:#fff;border-radius:999px;padding:4px 9px;margin-bottom:9px;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.efficient-queue{border:2px solid #d8a01f;background:#fffaf0;box-shadow:0 3px 12px #8c641512}.efficient-inline{color:#986710;font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;margin-left:8px}
+.calendar-legend{display:flex;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin:4px 0 10px}.calendar-legend span{display:inline-flex;align-items:center;gap:6px}.calendar-legend i{display:inline-block;width:12px;height:12px;border-radius:3px;background:#23725a}.calendar-legend .done{background:#60756d;opacity:.45}
 .priority-badge{display:inline-block;border-radius:999px;padding:4px 9px;font-size:10px;font-weight:800;letter-spacing:.055em;text-transform:uppercase;vertical-align:middle}.priority-subito{background:#fee4e2;color:#a52a20;border:1px solid #f5b7b1}.priority-urgente{background:#fff0d5;color:#9a5a00;border:1px solid #edc276}.priority-quando{background:#e8f2ed;color:#32654f;border:1px solid #bad5c8}.priority-card-subito{border-left:6px solid #c83d32}.priority-card-urgente{border-left:6px solid #d98b18}.priority-card-quando{border-left:6px solid #5d8a75}
 .schedule-overview{background:#fff;border:1px solid var(--line);border-radius:16px;padding:20px 22px;min-height:178px;box-shadow:0 3px 14px #173f330b}.schedule-overview.active{border-top:5px solid #23725a}.schedule-overview.next{border-top:5px solid #557c91}.schedule-overview.empty{border-style:dashed;box-shadow:none;background:#f8faf7}.schedule-label{font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:10px}.schedule-label .live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#2a8565;margin-right:6px}.schedule-overview .print-name{font-size:20px;margin:8px 0 6px}.schedule-window{font-size:13px;color:var(--muted);line-height:1.55}.schedule-window strong{color:var(--ink)}.schedule-progress{height:7px;background:#e8eee9;border-radius:99px;overflow:hidden;margin:15px 0 7px}.schedule-progress span{display:block;height:100%;background:#2f8064;border-radius:99px}.schedule-progress-label{font-size:11px;color:var(--muted);display:flex;justify-content:space-between;gap:12px}
 @media(max-width:760px){.print-uses{grid-template-columns:1fr}.nozzle-card .slot{font-size:29px}}
@@ -124,6 +125,31 @@ def calendar_colors(items):
         used_hues.append(hue)
         colors[item['key']] = f'hsl({hue}, 58%, 36%)'
     return colors
+
+
+def completed_calendar_events(items):
+    events = []
+    for item in items:
+        start = item.get('calendar_start')
+        duration = item.get('durata')
+        if not isinstance(start, datetime) or start == datetime.min or not duration:
+            continue
+        events.append({
+            'id': f'history-{item["key"]}',
+            'title': f'✓ COMPLETATA · {item["nome"]} · {duration_label(duration)} · {grams(item["totale"])} g',
+            'start': start.isoformat(),
+            'end': (start + timedelta(minutes=duration)).isoformat(),
+            'backgroundColor': '#60756d',
+            'borderColor': '#60756d',
+            'textColor': '#ffffff',
+            'editable': False,
+            'startEditable': False,
+            'durationEditable': False,
+            'overlap': True,
+            'classNames': ['completed-event'],
+            'extendedProps': {'planningState': 'completed'},
+        })
+    return events
 
 
 def priority_style(value):
@@ -315,6 +341,40 @@ def schedule_print_dialog(p):
         st.session_state['calendar_focus_date'] = day
         st.session_state['calendar_nonce'] = st.session_state.get('calendar_nonce', 0) + 1
         commit(lambda: schedule_planned_print(wb, p['key'], start, duration), 'Pianificazione aggiornata.')
+
+
+@st.dialog('Inserisci in questo orario', on_dismiss=close_editor)
+def calendar_slot_dialog(items, initial):
+    st.caption('Scegli una stampa dalla coda. Il calendario userà la sua durata completa e controllerà eventuali sovrapposizioni al salvataggio.')
+    with st.form('calendar_slot_form'):
+        choices = [item['key'] for item in items]
+        selected_key = st.selectbox(
+            'Stampa da inserire', choices,
+            format_func=lambda key: next(
+                f'{item["nome"]} · {duration_label(item["durata"])} · {grams(item["totale"])} g'
+                for item in items if item['key'] == key
+            ),
+            key='calendar_slot_plan',
+        )
+        selected = next(item for item in items if item['key'] == selected_key)
+        day_col, time_col = st.columns(2)
+        day = day_col.date_input('Giorno', value=initial.date(), key='calendar_slot_day')
+        clock = time_col.time_input('Ora di inizio', value=initial.time(), step=900, key='calendar_slot_time')
+        start = datetime.combine(day, clock)
+        st.info(f'Fine prevista: {(start + timedelta(minutes=selected["durata"])).strftime("%d/%m/%Y alle %H:%M")}')
+        save_action, cancel = st.columns(2)
+        submitted = save_action.form_submit_button('Inserisci nel calendario', type='primary', width='stretch')
+        cancelled = cancel.form_submit_button('Annulla', width='stretch')
+    if cancelled:
+        close_editor()
+        st.rerun()
+    if submitted:
+        st.session_state['calendar_focus_date'] = day
+        st.session_state['calendar_nonce'] = st.session_state.get('calendar_nonce', 0) + 1
+        commit(
+            lambda: schedule_planned_print(wb, selected['key'], start),
+            f'«{selected["nome"]}» inserita nel calendario.',
+        )
 
 
 @st.dialog('Completa stampa pianificata', width='large', on_dismiss=close_editor)
@@ -652,7 +712,8 @@ elif page == 'Pianificazione':
                     commit(lambda key=p['key']: delete_planned_print(wb, key), f'«{p["nome"]}» rimossa dalla pianificazione.')
 
     st.subheader('Calendario settimanale')
-    st.caption('Trascina un blocco dalla fascia “Da pianificare” dentro la griglia oraria, oppure sposta un blocco già inserito. Il rilascio salva automaticamente con precisione di 15 minuti.')
+    st.caption('Clicca un orario libero per inserire una stampa, oppure trascina i blocchi. Puoi anche cliccare un blocco attivo per spostarlo con data e ora precise.')
+    html('<div class="calendar-legend"><span><i></i> Pianificata / da pianificare</span><span><i class="done"></i> Completata · storico non modificabile</span></div>')
     scheduled_events = [{
         'id': p['key'],
         'title': f"{priority_style(p['priorita'])[2]} {p['priorita'].upper()} · {p['nome']} · {duration_label(p['durata'])} · {grams(p['totale'])} g",
@@ -661,6 +722,7 @@ elif page == 'Pianificazione':
         'backgroundColor': calendar_colors_by_key[p['key']],
         'borderColor': 'transparent',
         'textColor': '#ffffff',
+        'extendedProps': {'planningState': 'scheduled'},
     } for p in scheduled]
     queued_events = [{
         'id': p['key'],
@@ -673,12 +735,16 @@ elif page == 'Pianificazione':
         'classNames': ['queue-event'] + (['efficient-event'] if p['key'] == suggestion_key else []),
         'extendedProps': {'planningState': 'queued'},
     } for index, p in enumerate(queued)]
-    calendar_events = scheduled_events + queued_events
+    completed_events = completed_calendar_events(prints)
+    calendar_events = completed_events + scheduled_events + queued_events
     focus_date = st.session_state.get('calendar_focus_date', datetime.now().date())
     if isinstance(focus_date, datetime):
         focus_date = focus_date.date()
     calendar_signature = hash(tuple(
         (p['key'], p['inizio'], p['durata'], p['priorita']) for p in plans
+    ) + tuple(
+        (p['key'], p.get('calendar_start'), p.get('durata'), p['nome'], p['totale'])
+        for p in prints if p.get('durata')
     ))
     calendar_state = calendar(
         events=calendar_events,
@@ -690,7 +756,10 @@ elif page == 'Pianificazione':
             'editable': True,
             'eventStartEditable': True,
             'eventDurationEditable': False,
-            'eventOverlap': False,
+            # Let every drop reach Python. The precise full-duration overlap
+            # check then returns a useful message instead of the intermittent
+            # browser "not allowed" cursor, especially for all-day queue items.
+            'eventOverlap': True,
             'slotEventOverlap': False,
             'allDaySlot': True,
             'allDayText': 'DA PIANIFICARE',
@@ -702,6 +771,7 @@ elif page == 'Pianificazione':
             'slotDuration': '01:00:00',
             'slotLabelInterval': '01:00:00',
             'snapDuration': '00:15:00',
+            'eventDragMinDistance': 4,
             'height': 'auto',
             'expandRows': False,
             'headerToolbar': {'left': 'prev,next today', 'center': 'title', 'right': ''},
@@ -726,6 +796,8 @@ elif page == 'Pianificazione':
             .fc .queue-event { cursor: grab; border-width: 2px !important; border-radius: 5px; box-shadow: 0 1px 4px #173f3330; }
             .fc .queue-event:active { cursor: grabbing; }
             .fc .efficient-event { border-width: 3px !important; box-shadow: 0 0 0 2px #fff6cf, 0 2px 7px #9b6b1c66; }
+            .fc .completed-event { opacity: .42; cursor: default; filter: saturate(.55); box-shadow: none; }
+            .fc .completed-event .fc-event-main { text-decoration: none; }
             .fc .fc-daygrid-day-events { min-height: 20px; }
             .fc .fc-event-main { padding: 1px 2px; }
             .fc .fc-event-time { font-size: 7px; }
@@ -745,10 +817,11 @@ elif page == 'Pianificazione':
                 margin-top: -8px;
             }
         ''',
-        callbacks=['eventChange'],
+        callbacks=['eventChange', 'dateClick', 'eventClick'],
         key=f'planning_calendar_{st.session_state.get("calendar_nonce", 0)}_{calendar_signature}',
     )
-    if calendar_state and calendar_state.get('callback') == 'eventChange':
+    calendar_callback = calendar_state.get('callback') if calendar_state else None
+    if calendar_callback == 'eventChange':
         changed = calendar_state.get('eventChange', {}).get('event', {})
         try:
             moved_key = str(changed['id'])
@@ -772,6 +845,31 @@ elif page == 'Pianificazione':
                 verb = 'inserita' if moved_plan['inizio'] is None else 'spostata'
                 st.session_state['flash'] = f'«{moved_plan["nome"]}» {verb} al {moved_start.strftime("%d/%m/%Y alle %H:%M")}.'
                 st.session_state['calendar_focus_date'] = moved_start.date()
+        st.session_state['calendar_nonce'] = st.session_state.get('calendar_nonce', 0) + 1
+        st.rerun()
+    elif calendar_callback == 'dateClick':
+        clicked = calendar_state.get('dateClick', {})
+        try:
+            if clicked.get('allDay'):
+                raise ValueError('Clicca nella griglia delle ore, non nella fascia “Da pianificare”.')
+            if not queued:
+                raise ValueError('La coda è vuota: aggiungi prima una stampa da programmare.')
+            clicked_start = parse_calendar_datetime(clicked['date'])
+        except (KeyError, TypeError, ValueError) as exc:
+            st.session_state['flash_error'] = str(exc)
+        else:
+            st.session_state['editor'] = ('calendar_slot', clicked_start.isoformat())
+        st.session_state['calendar_nonce'] = st.session_state.get('calendar_nonce', 0) + 1
+        st.rerun()
+    elif calendar_callback == 'eventClick':
+        clicked_event = calendar_state.get('eventClick', {}).get('event', {})
+        clicked_key = str(clicked_event.get('id') or '')
+        if clicked_key.startswith('history-'):
+            st.session_state['flash'] = 'Questa stampa è completata e resta nel calendario come storico. Puoi modificarne i dati dalla pagina Storico.'
+        else:
+            clicked_plan = next((p for p in plans if p['key'] == clicked_key), None)
+            if clicked_plan:
+                st.session_state['editor'] = ('schedule', clicked_key)
         st.session_state['calendar_nonce'] = st.session_state.get('calendar_nonce', 0) + 1
         st.rerun()
 
@@ -916,6 +1014,12 @@ if 'editor' in st.session_state:
     elif kind == 'schedule':
         target = next((p for p in plans if p['key'] == identifier), None)
         if target: schedule_print_dialog(target)
+        else: close_editor()
+    elif kind == 'calendar_slot':
+        queued_targets = [p for p in plans if p['inizio'] is None]
+        try: initial = parse_calendar_datetime(identifier)
+        except (TypeError, ValueError): initial = datetime.now().replace(second=0, microsecond=0)
+        if queued_targets: calendar_slot_dialog(queued_targets, initial)
         else: close_editor()
     elif kind == 'priority':
         target = next((p for p in plans if p['key'] == identifier), None)

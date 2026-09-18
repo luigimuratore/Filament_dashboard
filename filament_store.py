@@ -15,6 +15,9 @@ FILE = Path(__file__).resolve().parent / 'Tracker_Filament_Dashboard.xlsx'
 PLANNING_SHEET = 'Pianificazione'
 PLANNING_PRIORITIES = ('SUBITO', 'Urgente', 'Quando possibile')
 PLANNING_PRIORITY_RANK = {'SUBITO': 3, 'Urgente': 2, 'Quando possibile': 1}
+PRINT_METADATA_HEADERS = {
+    8: 'ID Stampa', 9: 'Durata (min)', 10: 'Inizio nel calendario',
+}
 PLANNING_HEADERS = [
     'ID Pianificazione', 'Nome stampa', 'Durata (min)', 'Inizio previsto',
     'Ugello', 'ID Bobina', 'Materiale', 'Grammi previsti', 'Note', 'Creata il',
@@ -136,13 +139,13 @@ def record_print(wb, name, consumption, note='', when=None, duration_minutes=Non
     duration_minutes = _duration(duration_minutes)
     now, pid = when or datetime.now(), str(uuid4())
     ws = wb['Stampe']
-    ws.cell(1, 8, 'ID Stampa')
-    ws.cell(1, 9, 'Durata (min)')
+    for column, heading in PRINT_METADATA_HEADERS.items():
+        ws.cell(1, column, heading)
     for n, g in consumption.items():
         if g <= 0: continue
         b = bs[ass[n]]
         wb['Bobine'].cell(b['row'], 6, b['usati'] + g)
-        ws.append([now, name.strip(), n, b['id'], b['materiale'], g, note.strip(), pid, duration_minutes])
+        ws.append([now, name.strip(), n, b['id'], b['materiale'], g, note.strip(), pid, duration_minutes, None])
     sync_states(wb)
 
 
@@ -160,7 +163,23 @@ def history(wb):
         if len(row) > 8 and row[8] not in (None, ''):
             try: duration = int(row[8])
             except (ValueError, TypeError): pass
-        item = groups.setdefault(key, dict(data=date, nome=str(row[1] or ''), note=str(row[6] or ''), durata=duration, consumi=[], totale=0.0, rows=[], key=str(row[7]) if len(row) > 7 and row[7] else f'legacy-{row_number}'))
+        raw_planned_start = row[9] if len(row) > 9 else None
+        if isinstance(raw_planned_start, datetime):
+            planned_start = raw_planned_start
+        elif raw_planned_start:
+            try: planned_start = datetime.fromisoformat(str(raw_planned_start))
+            except (ValueError, TypeError): planned_start = None
+        else:
+            planned_start = None
+        item = groups.setdefault(key, dict(
+            data=date, nome=str(row[1] or ''), note=str(row[6] or ''),
+            durata=duration, consumi=[], totale=0.0, rows=[],
+            key=str(row[7]) if len(row) > 7 and row[7] else f'legacy-{row_number}',
+            planned_start=planned_start, calendar_start=planned_start or date,
+        ))
+        if item['planned_start'] is None and planned_start is not None:
+            item['planned_start'] = planned_start
+            item['calendar_start'] = planned_start
         item['rows'].append(row_number)
         grams = float(row[5] or 0)
         item['consumi'].append(dict(ugello=row[2], bobina=row[3], materiale=row[4], grammi=grams))
@@ -400,12 +419,15 @@ def complete_planned_print(wb, key, when=None, consumption=None):
         wb['Bobine'].cell(spool['row'], 6, spool['usati'] + grams)
     pid = str(uuid4())
     ws = wb['Stampe']
-    ws.cell(1, 8, 'ID Stampa')
-    ws.cell(1, 9, 'Durata (min)')
+    for column, heading in PRINT_METADATA_HEADERS.items():
+        ws.cell(1, column, heading)
+    # Keep the original slot after completion, even when the actual timestamp
+    # is corrected in the confirmation dialog or later in the history editor.
+    calendar_start = item['inizio'] or when
     for nozzle, spool, grams in uses:
         ws.append([
             when, item['nome'], nozzle, spool['id'], spool['materiale'], grams,
-            item['note'], pid, item['durata'],
+            item['note'], pid, item['durata'], calendar_start,
         ])
     delete_planned_print(wb, key)
     sync_states(wb)
@@ -523,10 +545,13 @@ def update_print(wb, key, name, when, note, consumption, duration_minutes=None):
     for bid, used in updated.items(): wb['Bobine'].cell(bs[bid]['row'], 6, used)
     ws = wb['Stampe']
     pid = ws.cell(original['rows'][0], 8).value or str(uuid4())
-    ws.cell(1, 8, 'ID Stampa')
-    ws.cell(1, 9, 'Durata (min)')
+    for column, heading in PRINT_METADATA_HEADERS.items():
+        ws.cell(1, column, heading)
     for index, use in enumerate(rows):
-        values = [when, name.strip(), *use, note.strip(), pid, duration_minutes]
+        values = [
+            when, name.strip(), *use, note.strip(), pid, duration_minutes,
+            original.get('planned_start'),
+        ]
         if index < len(original['rows']):
             for c, value in enumerate(values, 1): ws.cell(original['rows'][index], c).value = value
         else: ws.append(values)

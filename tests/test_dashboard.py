@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import json
 from datetime import datetime, time, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -81,6 +82,9 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual([p['key'] for p in remaining], [second])
         completed = store.history(self.wb)[0]
         self.assertEqual((completed['nome'], completed['durata'], completed['totale']), ('Lavoro lungo', 150, 14))
+        self.assertEqual(completed['data'], datetime(2026, 1, 5, 10, 30))
+        self.assertEqual(completed['planned_start'], start)
+        self.assertEqual(completed['calendar_start'], start)
         after = {b['id']: b['usati'] for b in store.bobine(self.wb)}
         self.assertEqual(after['B001'], before['B001'] + 10)
         self.assertEqual(after['B002'], before['B002'] + 4)
@@ -91,6 +95,31 @@ class DashboardTests(unittest.TestCase):
         loaded = store.load(self.path)
         self.assertIn('Pianificazione', loaded.sheetnames)
         self.assertEqual(store.history(loaded)[0]['durata'], 150)
+        self.assertEqual(loaded['Stampe'].cell(1, 10).value, 'Inizio nel calendario')
+        self.assertEqual(store.history(loaded)[0]['calendar_start'], start)
+
+    def test_history_calendar_start_falls_back_to_actual_date_and_survives_edits(self):
+        actual = datetime(2026, 1, 3, 14, 15)
+        store.record_print(self.wb, 'Stampa diretta', {1: 5, 2: 0, 3: 0}, when=actual, duration_minutes=75)
+        direct = store.history(self.wb)[0]
+        self.assertIsNone(direct['planned_start'])
+        self.assertEqual(direct['calendar_start'], actual)
+
+        planned_start = datetime(2026, 1, 6, 8, 30)
+        key = store.add_planned_print(
+            self.wb, 'Stampa pianificata', {1: 5, 2: 0, 3: 0}, 90,
+            start=planned_start,
+        )
+        store.complete_planned_print(self.wb, key, datetime(2026, 1, 6, 10, 15))
+        planned = store.history(self.wb)[0]
+        store.update_print(
+            self.wb, planned['key'], 'Stampa pianificata corretta',
+            datetime(2026, 1, 6, 10, 30), planned['note'], planned['consumi'], 100,
+        )
+        corrected = store.history(self.wb)[0]
+        self.assertEqual(corrected['planned_start'], planned_start)
+        self.assertEqual(corrected['calendar_start'], planned_start)
+        self.assertEqual(corrected['durata'], 100)
 
     def test_planned_completion_is_atomic_when_stock_is_insufficient(self):
         key = store.add_planned_print(self.wb, 'Troppo materiale', {1: 50, 2: 0, 3: 0}, 60)
@@ -429,5 +458,14 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(store.planned_prints(completed_book), [])
             self.assertEqual(store.history(completed_book)[0]['nome'], 'Da calendarizzare')
             self.assertEqual(store.bobine(completed_book)[0]['usati'], 4908)
+            calendar_args = json.loads(app.get('component_instance')[0].proto.json_args)
+            completed_events = [
+                event for event in calendar_args['events']
+                if event.get('extendedProps', {}).get('planningState') == 'completed'
+            ]
+            self.assertEqual(len(completed_events), 1)
+            completed_event = next(event for event in completed_events if 'Da calendarizzare' in event['title'])
+            self.assertFalse(completed_event['editable'])
+            self.assertIn('completed-event', completed_event['classNames'])
 
 if __name__ == '__main__': unittest.main()
