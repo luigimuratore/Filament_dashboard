@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from html import escape
+from zoneinfo import ZoneInfo
 import csv
 import io
 import json
@@ -38,6 +39,7 @@ from filament_store import (
 )
 
 CLOUD_DATA = cloud_data_config()
+CALENDAR_TIMEZONE = ZoneInfo('Europe/Rome')
 
 st.set_page_config(page_title='Filament ·  MITIC lab', page_icon='◉', layout='wide')
 st.markdown('''<style>
@@ -126,7 +128,11 @@ def commit(action, message, reset_print=False, reset_spool=False, next_page=None
 def parse_calendar_datetime(value):
     parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
     if parsed.tzinfo is not None:
-        parsed = parsed.astimezone().replace(tzinfo=None)
+        # Streamlit Cloud normally runs in UTC, while this production
+        # calendar uses Italian wall-clock time. Converting with the server's
+        # local timezone shifted a 17:00 drag to 15:00 and could shift it a
+        # second time on the following component update.
+        parsed = parsed.astimezone(CALENDAR_TIMEZONE).replace(tzinfo=None)
     return parsed
 
 
@@ -592,6 +598,8 @@ if st.session_state.pop('reset_spool', False):
 
 if 'flash' in st.session_state: st.success(st.session_state.pop('flash'))
 if 'flash_error' in st.session_state: st.error(st.session_state.pop('flash_error'))
+if 'calendar_notice' in st.session_state: st.toast(st.session_state.pop('calendar_notice'), icon='✅')
+if 'calendar_error' in st.session_state: st.toast(st.session_state.pop('calendar_error'), icon='⚠️')
 page = st.session_state['page']
 html(f'<div class="kicker">WORKSPACE / {e(page)}</div>')
 
@@ -877,6 +885,7 @@ elif page == 'Pianificazione':
             st.session_state['handled_calendar_callback'] = callback_fingerprint
     if calendar_callback == 'eventChange':
         changed = calendar_state.get('eventChange', {}).get('event', {})
+        calendar_changed = False
         try:
             moved_key = str(changed['id'])
             moved_plan = next(p for p in plans if p['key'] == moved_key)
@@ -885,14 +894,19 @@ elif page == 'Pianificazione':
                     raise ValueError('Trascina il blocco nella griglia delle ore per programmarlo.')
                 unschedule_planned_print(wb, moved_key)
                 save(wb)
+                calendar_changed = True
                 moved_start = None
             else:
                 moved_start = parse_calendar_datetime(changed['start'])
-                schedule_planned_print(wb, moved_key, moved_start)
-                save(wb)
+                if moved_plan['inizio'] != moved_start:
+                    schedule_planned_print(wb, moved_key, moved_start)
+                    save(wb)
+                    calendar_changed = True
         except (KeyError, StopIteration, TypeError, ValueError, OSError) as exc:
-            st.session_state['flash_error'] = f'Spostamento annullato: {exc}'
-        else:
+            st.session_state['calendar_error'] = f'Spostamento annullato: {exc}'
+            # Reload the persisted events to undo the invalid client-side drop.
+            st.rerun()
+        if calendar_changed:
             cloud_error = None
             if CLOUD_DATA:
                 try:
@@ -900,14 +914,16 @@ elif page == 'Pianificazione':
                 except (SyncError, OSError) as exc:
                     cloud_error = str(exc)
             if cloud_error:
-                st.session_state['flash_error'] = f'Spostamento salvato sul server ma non ancora su GitHub: {cloud_error}'
+                st.session_state['calendar_error'] = f'Spostamento salvato sul server ma non ancora su GitHub: {cloud_error}'
             elif moved_start is None:
-                st.session_state['flash'] = f'«{moved_plan["nome"]}» rimessa nella coda.'
+                st.session_state['calendar_notice'] = f'«{moved_plan["nome"]}» rimessa nella coda.'
             else:
                 verb = 'inserita' if moved_plan['inizio'] is None else 'spostata'
-                st.session_state['flash'] = f'«{moved_plan["nome"]}» {verb} al {moved_start.strftime("%d/%m/%Y alle %H:%M")}. Archivio condiviso aggiornato.' if CLOUD_DATA else f'«{moved_plan["nome"]}» {verb} al {moved_start.strftime("%d/%m/%Y alle %H:%M")}.'
+                st.session_state['calendar_notice'] = f'«{moved_plan["nome"]}» {verb} al {moved_start.strftime("%d/%m/%Y alle %H:%M")}. Archivio condiviso aggiornato.' if CLOUD_DATA else f'«{moved_plan["nome"]}» {verb} al {moved_start.strftime("%d/%m/%Y alle %H:%M")}.'
                 st.session_state['calendar_focus_date'] = moved_start.date()
-        st.rerun()
+            # One refresh is necessary to feed the persisted event back to
+            # FullCalendar. The stable key keeps the iframe mounted.
+            st.rerun()
     elif calendar_callback == 'dateClick':
         clicked = calendar_state.get('dateClick', {})
         try:
@@ -917,20 +933,18 @@ elif page == 'Pianificazione':
                 raise ValueError('La coda è vuota: aggiungi prima una stampa da programmare.')
             clicked_start = parse_calendar_datetime(clicked['date'])
         except (KeyError, TypeError, ValueError) as exc:
-            st.session_state['flash_error'] = str(exc)
+            st.toast(str(exc), icon='⚠️')
         else:
             st.session_state['editor'] = ('calendar_slot', clicked_start.isoformat())
-        st.rerun()
     elif calendar_callback == 'eventClick':
         clicked_event = calendar_state.get('eventClick', {}).get('event', {})
         clicked_key = str(clicked_event.get('id') or '')
         if clicked_key.startswith('history-'):
-            st.session_state['flash'] = 'Questa stampa è completata e resta nel calendario come storico. Puoi modificarne i dati dalla pagina Storico.'
+            st.toast('Questa stampa è completata e resta nel calendario come storico. Puoi modificarne i dati dalla pagina Storico.', icon='ℹ️')
         else:
             clicked_plan = next((p for p in plans if p['key'] == clicked_key), None)
             if clicked_plan:
                 st.session_state['editor'] = ('schedule', clicked_key)
-        st.rerun()
 
     st.subheader('Stampe in calendario')
     if not scheduled:

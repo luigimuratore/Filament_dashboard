@@ -2,6 +2,7 @@ import tempfile
 import unittest
 import json
 import os
+import time as time_module
 from datetime import datetime, time, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -498,5 +499,45 @@ class DashboardTests(unittest.TestCase):
             completed_event = next(event for event in completed_events if 'Da calendarizzare' in event['title'])
             self.assertFalse(completed_event['editable'])
             self.assertIn('completed-event', completed_event['classNames'])
+
+    def test_calendar_drag_uses_italian_time_instead_of_server_timezone(self):
+        key = store.add_planned_print(
+            self.wb, 'Orario italiano', {1: 5, 2: 0, 3: 0}, 60,
+            created=datetime(2026, 9, 18, 10),
+        )
+        store.save(self.wb, self.path)
+        calendar_callback = {
+            'callback': 'eventChange',
+            'eventChange': {
+                'event': {
+                    'id': key,
+                    'allDay': False,
+                    'start': '2026-09-21T17:00:00+02:00',
+                },
+            },
+        }
+        original_load, original_save = store.load, store.save
+        original_timezone = os.environ.get('TZ')
+        try:
+            # Match Streamlit Cloud's UTC server timezone. The +02:00 value
+            # still has to be stored as the 17:00 Italian wall-clock time.
+            os.environ['TZ'] = 'UTC'
+            time_module.tzset()
+            with patch('streamlit_calendar.calendar', return_value=calendar_callback), \
+                 patch.object(store, 'FILE', self.path), \
+                 patch.object(store, 'load', side_effect=lambda: original_load(self.path)), \
+                 patch.object(store, 'save', side_effect=lambda wb: original_save(wb, self.path)):
+                app = AppTest.from_file(str(ROOT / 'filament_dashboard.py')).run()
+                app.sidebar.radio[0].set_value('Pianificazione').run()
+                self.assertFalse(app.exception)
+        finally:
+            if original_timezone is None:
+                os.environ.pop('TZ', None)
+            else:
+                os.environ['TZ'] = original_timezone
+            time_module.tzset()
+
+        planned = next(p for p in store.planned_prints(original_load(self.path)) if p['key'] == key)
+        self.assertEqual(planned['inizio'], datetime(2026, 9, 21, 17, 0))
 
 if __name__ == '__main__': unittest.main()
