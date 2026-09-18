@@ -472,7 +472,7 @@ class DashboardTests(unittest.TestCase):
             self.assertFalse(app.exception)
             self.assertIsNone(store.planned_prints(original_load(self.path))[0]['inizio'])
             self.assertEqual(len(app.get('component_instance')), 1)
-            self.assertNotEqual(app.get('component_instance')[0].key, calendar_key)
+            self.assertEqual(app.get('component_instance')[0].key, calendar_key)
 
             app.button(key=f'schedule_{scheduled["key"]}').click().run()
             app.date_input(key=f'schedule_day_{scheduled["key"]}').set_value(datetime.now().date() + timedelta(days=1))

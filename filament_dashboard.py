@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from html import escape
 import csv
 import io
+import json
 import streamlit as st
 from streamlit_calendar import calendar
 import importlib
@@ -356,7 +357,6 @@ def schedule_print_dialog(p):
         st.rerun()
     if submitted:
         st.session_state['calendar_focus_date'] = day
-        st.session_state['calendar_nonce'] = st.session_state.get('calendar_nonce', 0) + 1
         commit(lambda: schedule_planned_print(wb, p['key'], start, duration), 'Pianificazione aggiornata.')
 
 
@@ -387,7 +387,6 @@ def calendar_slot_dialog(items, initial):
         st.rerun()
     if submitted:
         st.session_state['calendar_focus_date'] = day
-        st.session_state['calendar_nonce'] = st.session_state.get('calendar_nonce', 0) + 1
         commit(
             lambda: schedule_planned_print(wb, selected['key'], start),
             f'«{selected["nome"]}» inserita nel calendario.',
@@ -724,7 +723,6 @@ elif page == 'Pianificazione':
                 if st.button('Accetta proposta', icon=':material/auto_awesome:', type='primary',
                              key=f'accept_suggestion_{proposed["key"]}', width='stretch'):
                     st.session_state['calendar_focus_date'] = suggestion['inizio'].date()
-                    st.session_state['calendar_nonce'] = st.session_state.get('calendar_nonce', 0) + 1
                     commit(
                         lambda: schedule_planned_print(wb, proposed['key'], suggestion['inizio']),
                         f'«{proposed["nome"]}» inserita automaticamente nel calendario.')
@@ -784,12 +782,6 @@ elif page == 'Pianificazione':
     focus_date = st.session_state.get('calendar_focus_date', datetime.now().date())
     if isinstance(focus_date, datetime):
         focus_date = focus_date.date()
-    calendar_signature = hash(tuple(
-        (p['key'], p['inizio'], p['durata'], p['priorita']) for p in plans
-    ) + tuple(
-        (p['key'], p.get('calendar_start'), p.get('durata'), p['nome'], p['totale'])
-        for p in prints if p.get('durata')
-    ))
     calendar_state = calendar(
         events=calendar_events,
         options={
@@ -862,9 +854,27 @@ elif page == 'Pianificazione':
             }
         ''',
         callbacks=['eventChange', 'dateClick', 'eventClick'],
-        key=f'planning_calendar_{st.session_state.get("calendar_nonce", 0)}_{calendar_signature}',
+        # A stable key lets FullCalendar update in place. Changing it after
+        # every edit unmounted the iframe and caused the visible one-second
+        # disappear/reappear effect.
+        key='planning_calendar',
     )
     calendar_callback = calendar_state.get('callback') if calendar_state else None
+    if calendar_callback:
+        callback_payload = {
+            'callback': calendar_callback,
+            calendar_callback: calendar_state.get(calendar_callback),
+        }
+        callback_fingerprint = json.dumps(
+            callback_payload, sort_keys=True, separators=(',', ':'), default=str,
+        )
+        if st.session_state.get('handled_calendar_callback') == callback_fingerprint:
+            calendar_callback = None
+        else:
+            # Custom components retain their latest value across normal
+            # Streamlit reruns. Remember it so a saved drag/click is not
+            # processed a second time when the page refreshes its data.
+            st.session_state['handled_calendar_callback'] = callback_fingerprint
     if calendar_callback == 'eventChange':
         changed = calendar_state.get('eventChange', {}).get('event', {})
         try:
@@ -897,7 +907,6 @@ elif page == 'Pianificazione':
                 verb = 'inserita' if moved_plan['inizio'] is None else 'spostata'
                 st.session_state['flash'] = f'«{moved_plan["nome"]}» {verb} al {moved_start.strftime("%d/%m/%Y alle %H:%M")}. Archivio condiviso aggiornato.' if CLOUD_DATA else f'«{moved_plan["nome"]}» {verb} al {moved_start.strftime("%d/%m/%Y alle %H:%M")}.'
                 st.session_state['calendar_focus_date'] = moved_start.date()
-        st.session_state['calendar_nonce'] = st.session_state.get('calendar_nonce', 0) + 1
         st.rerun()
     elif calendar_callback == 'dateClick':
         clicked = calendar_state.get('dateClick', {})
@@ -911,7 +920,6 @@ elif page == 'Pianificazione':
             st.session_state['flash_error'] = str(exc)
         else:
             st.session_state['editor'] = ('calendar_slot', clicked_start.isoformat())
-        st.session_state['calendar_nonce'] = st.session_state.get('calendar_nonce', 0) + 1
         st.rerun()
     elif calendar_callback == 'eventClick':
         clicked_event = calendar_state.get('eventClick', {}).get('event', {})
@@ -922,7 +930,6 @@ elif page == 'Pianificazione':
             clicked_plan = next((p for p in plans if p['key'] == clicked_key), None)
             if clicked_plan:
                 st.session_state['editor'] = ('schedule', clicked_key)
-        st.session_state['calendar_nonce'] = st.session_state.get('calendar_nonce', 0) + 1
         st.rerun()
 
     st.subheader('Stampe in calendario')
@@ -939,7 +946,6 @@ elif page == 'Pianificazione':
             if complete.button('Completa', icon=':material/check_circle:', key=f'complete_plan_{p["key"]}', type='primary', width='stretch'):
                 st.session_state['editor'] = ('complete', p['key'])
             if queue_again.button('In coda', icon=':material/undo:', key=f'unschedule_plan_{p["key"]}', width='stretch'):
-                st.session_state['calendar_nonce'] = st.session_state.get('calendar_nonce', 0) + 1
                 commit(lambda key=p['key']: unschedule_planned_print(wb, key), f'«{p["nome"]}» rimessa nella coda.')
             if remove.button('Elimina', icon=':material/delete:', key=f'delete_scheduled_{p["key"]}', width='stretch'):
                 commit(lambda key=p['key']: delete_planned_print(wb, key), f'«{p["nome"]}» rimossa dalla pianificazione.')
