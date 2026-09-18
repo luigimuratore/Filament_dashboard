@@ -1,11 +1,19 @@
 """Git synchronization with guarded fast-forward updates and explicit push."""
+import base64
 from datetime import datetime
+import json
 from pathlib import Path
 from filament_lock import file_lock
+import hashlib
 import os
+import re
+import shutil
 import subprocess
 import sys
-from urllib.parse import urlparse
+import tempfile
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlencode, urlparse
+from urllib.request import Request, urlopen
 
 BASE = Path(__file__).resolve().parent
 PROJECT_FILES = [
@@ -18,10 +26,180 @@ PROJECT_FILES = [
 ]
 COMMIT_NAME = 'Filament Dashboard'
 COMMIT_EMAIL = 'filament-dashboard@users.noreply.github.com'
+GITHUB_API = 'https://api.github.com'
+GITHUB_API_VERSION = '2026-03-10'
 
 
 class SyncError(Exception):
     pass
+
+
+class GitHubAPIError(SyncError):
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
+
+
+def cloud_data_config(env=None):
+    """Return the opt-in GitHub data-store configuration from Streamlit secrets."""
+    env = os.environ if env is None else env
+    token = str(env.get('GITHUB_DATA_TOKEN') or '').strip()
+    if not token:
+        return None
+    config = {
+        'token': token,
+        'owner': str(env.get('GITHUB_DATA_OWNER') or 'luigimuratore').strip(),
+        'repo': str(env.get('GITHUB_DATA_REPO') or 'Filament_dashboard').strip(),
+        'branch': str(env.get('GITHUB_DATA_BRANCH') or 'dashboard-data').strip(),
+        'base_branch': str(env.get('GITHUB_DATA_BASE_BRANCH') or 'main').strip(),
+        'path': str(env.get('GITHUB_DATA_PATH') or 'Tracker_Filament_Dashboard.xlsx').strip(),
+    }
+    simple_name = re.compile(r'^[A-Za-z0-9_.-]+$')
+    if not simple_name.fullmatch(config['owner']) or not simple_name.fullmatch(config['repo']):
+        raise SyncError('Configurazione GitHub cloud non valida: controlla proprietario e repository.')
+    if (not config['branch'] or not config['base_branch']
+            or any(value.startswith(('-', '.')) or '..' in value or value.endswith(('/', '.lock'))
+                   for value in (config['branch'], config['base_branch']))):
+        raise SyncError('Configurazione GitHub cloud non valida: controlla i nomi dei branch.')
+    if config['path'] != 'Tracker_Filament_Dashboard.xlsx':
+        raise SyncError('Per sicurezza la sincronizzazione cloud può aggiornare solo l’archivio Excel della dashboard.')
+    return config
+
+
+def _github_api(config, method, endpoint, payload=None):
+    body = None if payload is None else json.dumps(payload).encode('utf-8')
+    request = Request(
+        f'{GITHUB_API}{endpoint}', data=body, method=method,
+        headers={
+            'Accept': 'application/vnd.github+json',
+            'Authorization': f'Bearer {config["token"]}',
+            'X-GitHub-Api-Version': GITHUB_API_VERSION,
+            'User-Agent': 'filament-dashboard-cloud-sync',
+            **({'Content-Type': 'application/json'} if body is not None else {}),
+        },
+    )
+    try:
+        with urlopen(request, timeout=45) as response:
+            raw = response.read()
+    except HTTPError as exc:
+        try:
+            details = json.loads(exc.read().decode('utf-8')).get('message', '')
+        except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+            details = ''
+        messages = {
+            401: 'Token GitHub non valido o scaduto.',
+            403: 'Il token GitHub non ha il permesso Contents: Read and write sulla repository.',
+            404: 'Repository, branch o archivio GitHub non trovato. Controlla i Secrets dell’app.',
+            409: 'GitHub ha rilevato un aggiornamento contemporaneo. Riprova tra pochi secondi.',
+            422: 'GitHub ha rifiutato l’aggiornamento. Controlla branch e permessi del token.',
+        }
+        message = messages.get(exc.code, 'Sincronizzazione GitHub cloud non riuscita.')
+        if details and details.casefold() not in message.casefold():
+            message = f'{message} GitHub: {details}'
+        raise GitHubAPIError(exc.code, message) from exc
+    except (URLError, TimeoutError, OSError) as exc:
+        raise SyncError('Connessione a GitHub non riuscita. La modifica resta temporaneamente sul server; usa “Salva ora su GitHub” per riprovare.') from exc
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw.decode('utf-8'))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SyncError('GitHub ha restituito una risposta non valida.') from exc
+
+
+def _cloud_endpoint(config, suffix):
+    owner = quote(config['owner'], safe='')
+    repo = quote(config['repo'], safe='')
+    return f'/repos/{owner}/{repo}/{suffix}'
+
+
+def ensure_cloud_data_branch(config):
+    branch = quote(config['branch'], safe='')
+    try:
+        _github_api(config, 'GET', _cloud_endpoint(config, f'git/ref/heads/{branch}'))
+        return False
+    except GitHubAPIError as exc:
+        if exc.status != 404:
+            raise
+    base = quote(config['base_branch'], safe='')
+    source = _github_api(config, 'GET', _cloud_endpoint(config, f'git/ref/heads/{base}'))
+    try:
+        sha = source['object']['sha']
+    except (KeyError, TypeError):
+        raise SyncError('Non riesco a leggere il branch principale della repository.')
+    try:
+        _github_api(config, 'POST', _cloud_endpoint(config, 'git/refs'), {
+            'ref': f'refs/heads/{config["branch"]}', 'sha': sha,
+        })
+    except GitHubAPIError as exc:
+        # Another app session may have created the branch in the meantime.
+        if exc.status != 422:
+            raise
+    return True
+
+
+def _cloud_archive(config):
+    path = quote(config['path'], safe='/')
+    query = urlencode({'ref': config['branch']})
+    item = _github_api(config, 'GET', _cloud_endpoint(config, f'contents/{path}?{query}'))
+    try:
+        content = base64.b64decode(item['content'], validate=False)
+        sha = item['sha']
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SyncError('L’archivio ricevuto da GitHub non è valido.') from exc
+    if not content.startswith(b'PK'):
+        raise SyncError('Il file dati su GitHub non è un archivio Excel valido.')
+    return content, sha
+
+
+def pull_cloud_archive(config, path=BASE / 'Tracker_Filament_Dashboard.xlsx'):
+    """Restore the shared workbook from its data-only branch."""
+    path = Path(path)
+    ensure_cloud_data_branch(config)
+    content, _ = _cloud_archive(config)
+    with file_lock(path.with_suffix('.lock')):
+        current = path.read_bytes() if path.exists() else b''
+        if hashlib.sha256(current).digest() == hashlib.sha256(content).digest():
+            return False, 'Archivio condiviso già aggiornato.'
+        fd, temporary = tempfile.mkstemp(dir=path.parent, suffix='.xlsx')
+        os.close(fd)
+        try:
+            Path(temporary).write_bytes(content)
+            if path.exists():
+                shutil.copy2(path, path.with_suffix('.backup.xlsx'))
+            os.replace(temporary, path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+    return True, 'Archivio condiviso recuperato da GitHub.'
+
+
+def push_cloud_archive(config, path=BASE / 'Tracker_Filament_Dashboard.xlsx'):
+    """Commit only the workbook to the data branch; never expose the token to clients."""
+    path = Path(path)
+    ensure_cloud_data_branch(config)
+    with file_lock(path.with_suffix('.lock')):
+        content = path.read_bytes()
+    remote, sha = _cloud_archive(config)
+    if hashlib.sha256(remote).digest() == hashlib.sha256(content).digest():
+        return False, 'GitHub già aggiornato.'
+    endpoint = _cloud_endpoint(config, f'contents/{quote(config["path"], safe="/")}')
+    payload = {
+        'message': f'Aggiorna dati dashboard · {datetime.now():%Y-%m-%d %H:%M:%S}',
+        'content': base64.b64encode(content).decode('ascii'),
+        'sha': sha,
+        'branch': config['branch'],
+        'committer': {'name': COMMIT_NAME, 'email': COMMIT_EMAIL},
+    }
+    try:
+        _github_api(config, 'PUT', endpoint, payload)
+    except GitHubAPIError as exc:
+        if exc.status != 409:
+            raise
+        # Serialize a collision by replacing the newest blob, not the stale one.
+        _, payload['sha'] = _cloud_archive(config)
+        _github_api(config, 'PUT', endpoint, payload)
+    return True, 'Archivio salvato nel branch dati di GitHub.'
 
 
 def git(root, *args):

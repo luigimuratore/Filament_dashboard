@@ -1,12 +1,14 @@
 import tempfile
 import unittest
 import json
+import os
 from datetime import datetime, time, timedelta
 from pathlib import Path
 from unittest.mock import patch
 from openpyxl import Workbook
 from streamlit.testing.v1 import AppTest
 import filament_store as store
+import filament_sync as sync
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -396,6 +398,35 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(app.number_input(key='cons_1_B001').value, 0)
             self.assertEqual(app.text_input(key='print_name').value, '')
             self.assertTrue(any(p['nome'] == 'UI test' for p in store.history(original_load(self.path))))
+
+    def test_cloud_mode_hides_desktop_login_and_pushes_each_change(self):
+        original_load, original_save = store.load, store.save
+        cloud_env = {
+            'GITHUB_DATA_TOKEN': 'secret-test-token',
+            'GITHUB_DATA_OWNER': 'luigimuratore',
+            'GITHUB_DATA_REPO': 'Filament_dashboard',
+            'GITHUB_DATA_BRANCH': 'dashboard-data',
+        }
+        with patch.dict(os.environ, cloud_env), \
+             patch.object(sync, 'pull_cloud_archive', return_value=(False, 'Archivio aggiornato.')), \
+             patch.object(sync, 'push_cloud_archive', return_value=(True, 'Archivio salvato.')) as push, \
+             patch.object(store, 'FILE', self.path), \
+             patch.object(store, 'load', side_effect=lambda: original_load(self.path)), \
+             patch.object(store, 'save', side_effect=lambda wb: original_save(wb, self.path)):
+            app = AppTest.from_file(str(ROOT / 'filament_dashboard.py')).run()
+            self.assertFalse(app.exception)
+            labels = [button.label for button in app.button]
+            self.assertNotIn('GitHub · Windows', labels)
+            self.assertNotIn('GitHub · Mac', labels)
+            self.assertIn('Salva ora', labels)
+            self.assertTrue(any('GitHub connesso' in message.value for message in app.success))
+
+            app.sidebar.radio[0].set_value('Nuova stampa').run()
+            app.text_input(key='print_name').set_value('Salvataggio cloud')
+            app.number_input(key='cons_1_B001').set_value(1)
+            next(button for button in app.button if button.label == 'Registra stampa e aggiorna scorte').click().run()
+            self.assertFalse(app.exception)
+            self.assertGreaterEqual(push.call_count, 1)
 
     def test_new_print_can_be_sent_to_planning_queue(self):
         original_load, original_save = store.load, store.save

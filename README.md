@@ -33,6 +33,26 @@ Per controllare i requisiti senza avviare il server, esegui `python avvia_dashbo
 
 Il blocco dell'archivio usa le funzioni native del sistema operativo. Il workflow `.github/workflows/tests.yml` esegue i test su Windows e macOS a ogni push/PR. La verifica locale della migrazione e stata eseguita su macOS; il primo risultato Windows sara disponibile dopo il push.
 
+## Uso condiviso su Streamlit Community Cloud
+
+Sul deploy web non si usa il login GitHub della barra laterale: quel flusso è riservato agli eseguibili Windows/macOS. L’app cloud usa invece un fine-grained personal access token conservato nei Secrets di Streamlit. Il token viene usato esclusivamente per leggere e aggiornare `Tracker_Filament_Dashboard.xlsx`; non può essere mostrato nel browser e il codice dell’app non viene modificato.
+
+1. In GitHub apri **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**.
+2. In **Repository access** seleziona soltanto `Filament_dashboard`.
+3. In **Repository permissions** assegna a **Contents** il valore **Read and write**. Non servono permessi Workflows o Administration.
+4. Nell’app Streamlit apri **Manage app → Settings → Secrets** e salva:
+
+```toml
+GITHUB_DATA_TOKEN = "github_pat_INSERISCI_QUI_IL_TOKEN"
+GITHUB_DATA_OWNER = "luigimuratore"
+GITHUB_DATA_REPO = "Filament_dashboard"
+GITHUB_DATA_BRANCH = "dashboard-data"
+```
+
+Non inserire mai il token in un file della repository. Dopo il riavvio, l’app crea automaticamente il branch `dashboard-data` partendo da `main`, recupera l’archivio all’apertura e lo aggiorna dopo ogni modifica. Tenere i dati su un branch separato evita che ogni registrazione provochi un nuovo deploy Streamlit. Chiunque abbia accesso al link può modificare i dati, come richiesto; il token permette comunque all’interfaccia di aggiornare soltanto l’archivio Excel previsto.
+
+I pulsanti **Recupera** e **Salva ora** servono come controllo manuale dopo un errore di rete. Il codice continua invece a essere aggiornato con normali commit sul branch `main`; Streamlit lo ridistribuisce automaticamente.
+
 ## Il flusso quotidiano
 
 1. **Panoramica**: controlla subito la stampa in corso, la percentuale trascorsa, il tempo rimanente e la stampa successiva già calendarizzata; le due schede mostrano anche orari e priorità. Nella stessa pagina trovi le bobine caricate sui tre ugelli. Apri “Cambia bobine” per assegnare, scambiare o scaricare una bobina. Una bobina può occupare un solo ugello.

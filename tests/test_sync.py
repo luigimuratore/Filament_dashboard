@@ -6,7 +6,8 @@ from pathlib import Path
 from unittest.mock import patch
 from filament_sync import (
     sync_project, authenticate_github, github_owner, git,
-    SyncError,
+    SyncError, GitHubAPIError, cloud_data_config, ensure_cloud_data_branch,
+    pull_cloud_archive, push_cloud_archive,
 )
 
 
@@ -191,3 +192,51 @@ class SyncTests(unittest.TestCase):
             (verify / 'Tracker_Filament_Dashboard.xlsx').read_bytes(),
             b'updated workbook',
         )
+
+    def test_cloud_config_is_opt_in_and_restricted_to_the_archive(self):
+        self.assertIsNone(cloud_data_config({}))
+        config = cloud_data_config({'GITHUB_DATA_TOKEN': 'secret'})
+        self.assertEqual((config['owner'], config['repo'], config['branch']), (
+            'luigimuratore', 'Filament_dashboard', 'dashboard-data',
+        ))
+        with self.assertRaisesRegex(SyncError, 'solo l’archivio Excel'):
+            cloud_data_config({
+                'GITHUB_DATA_TOKEN': 'secret',
+                'GITHUB_DATA_PATH': 'filament_dashboard.py',
+            })
+
+    def test_cloud_data_branch_is_created_from_main_once(self):
+        config = cloud_data_config({'GITHUB_DATA_TOKEN': 'secret'})
+        with patch('filament_sync._github_api', side_effect=[
+                GitHubAPIError(404, 'missing'),
+                {'object': {'sha': 'main-sha'}},
+                {'ref': 'refs/heads/dashboard-data'},
+        ]) as api:
+            self.assertTrue(ensure_cloud_data_branch(config))
+        self.assertEqual(api.call_args_list[2].args[1], 'POST')
+        self.assertEqual(api.call_args_list[2].args[3], {
+            'ref': 'refs/heads/dashboard-data', 'sha': 'main-sha',
+        })
+
+    def test_cloud_archive_pull_and_push_use_only_the_data_branch(self):
+        config = cloud_data_config({'GITHUB_DATA_TOKEN': 'secret'})
+        archive = self.root / 'Tracker_Filament_Dashboard.xlsx'
+        archive.write_bytes(b'PK-local-workbook')
+        with patch('filament_sync.ensure_cloud_data_branch'), \
+             patch('filament_sync._cloud_archive', return_value=(b'PK-remote-workbook', 'old-sha')):
+            changed, _ = pull_cloud_archive(config, archive)
+        self.assertTrue(changed)
+        self.assertEqual(archive.read_bytes(), b'PK-remote-workbook')
+        self.assertEqual(archive.with_suffix('.backup.xlsx').read_bytes(), b'PK-local-workbook')
+
+        archive.write_bytes(b'PK-new-local-workbook')
+        with patch('filament_sync.ensure_cloud_data_branch'), \
+             patch('filament_sync._cloud_archive', return_value=(b'PK-remote-workbook', 'old-sha')), \
+             patch('filament_sync._github_api', return_value={}) as api:
+            changed, _ = push_cloud_archive(config, archive)
+        self.assertTrue(changed)
+        method, endpoint, payload = api.call_args.args[1:]
+        self.assertEqual(method, 'PUT')
+        self.assertEqual(payload['branch'], 'dashboard-data')
+        self.assertEqual(payload['sha'], 'old-sha')
+        self.assertIn('/contents/Tracker_Filament_Dashboard.xlsx', endpoint)

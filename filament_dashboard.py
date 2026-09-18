@@ -8,10 +8,12 @@ import importlib
 import filament_store
 import filament_sync
 if not all(hasattr(filament_sync, name) for name in (
-        'pull_project', 'authenticate_github', 'clear_legacy_github_username')):
+        'pull_project', 'authenticate_github', 'clear_legacy_github_username',
+        'cloud_data_config', 'pull_cloud_archive', 'push_cloud_archive')):
     importlib.reload(filament_sync)
 from filament_sync import (
     sync_project, pull_project, authenticate_github, SyncError,
+    cloud_data_config, pull_cloud_archive, push_cloud_archive,
 )
 
 # An already-running Streamlit session may retain the module from before an update.
@@ -33,6 +35,8 @@ from filament_store import (
     complete_planned_print, delete_planned_print, suggest_next_print,
     update_planned_priority, planning_priority,
 )
+
+CLOUD_DATA = cloud_data_config()
 
 st.set_page_config(page_title='Filament ·  MITIC lab', page_icon='◉', layout='wide')
 st.markdown('''<style>
@@ -95,8 +99,21 @@ def commit(action, message, reset_print=False, reset_spool=False, next_page=None
     except (ValueError, OSError) as exc:
         st.error(str(exc))
     else:
+        cloud_error = None
+        if CLOUD_DATA:
+            try:
+                push_cloud_archive(CLOUD_DATA, FILE)
+            except (SyncError, OSError) as exc:
+                cloud_error = str(exc)
         st.session_state.pop('editor', None)
-        st.session_state['flash'] = message
+        if cloud_error:
+            st.session_state['flash_error'] = (
+                f'{message} La modifica è attiva sul server ma non è ancora arrivata su GitHub: '
+                f'{cloud_error}'
+            )
+        else:
+            suffix = ' Archivio condiviso aggiornato.' if CLOUD_DATA else ''
+            st.session_state['flash'] = message + suffix
         if reset_print:
             st.session_state['reset_print'] = True
             st.session_state['next_page'] = next_page or 'Panoramica'
@@ -437,9 +454,13 @@ def csv_bytes(rows):
 
 
 def recover_updates():
-    with st.spinner('Controllo aggiornamenti su GitHub…'):
+    label = 'Recupero archivio condiviso da GitHub…' if CLOUD_DATA else 'Controllo aggiornamenti su GitHub…'
+    with st.spinner(label):
         try:
-            changed, message = pull_project(FILE.parent)
+            if CLOUD_DATA:
+                changed, message = pull_cloud_archive(CLOUD_DATA, FILE)
+            else:
+                changed, message = pull_project(FILE.parent)
         except (SyncError, OSError) as exc:
             st.session_state['pull_result'] = ('warning', str(exc))
         else:
@@ -487,50 +508,73 @@ with st.sidebar:
     html('<div class="hint"><span class="green">●</span> Oltre il 40% · Disponibile<br><span class="amber">●</span> 21–40% · In diminuzione<br><span class="red">●</span> Fino al 20% · Critico</div>')
     st.divider()
     st.download_button('Scarica archivio Excel', FILE.read_bytes(), FILE.name, mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', width='stretch')
-    st.caption('Dati salvati localmente · copia di sicurezza automatica a ogni modifica.')
+    st.caption('Dati condivisi su GitHub e copia di sicurezza automatica.' if CLOUD_DATA else 'Dati salvati localmente · copia di sicurezza automatica a ogni modifica.')
     st.divider()
-    st.caption('Aggiornamenti GitHub')
-    st.caption('Controllo automatico all’apertura. Le modifiche locali bloccano il pull per proteggere i dati.')
-    st.caption('Il push è consentito solo agli account aggiunti come Collaborators della repository.')
-    login_windows, login_mac = st.columns(2)
-    login_system = None
-    if login_windows.button('GitHub · Windows', icon=':material/login:', key='login_github_windows',
-                            width='stretch', help='Accesso tramite Gestore credenziali di Windows.'):
-        login_system = 'windows'
-    if login_mac.button('GitHub · Mac', icon=':material/login:', key='login_github_macos',
-                        width='stretch', help='Accesso tramite Git Credential Manager e Portachiavi di macOS.'):
-        login_system = 'macos'
-    if login_system:
-        with st.spinner('Completa l’accesso nella finestra del browser…'):
-            try:
-                auth_message = authenticate_github(system=login_system)
-            except (SyncError, OSError) as exc:
-                st.session_state['auth_result'] = ('error', str(exc))
-            else:
-                st.session_state['auth_result'] = ('success', auth_message)
-                st.session_state['pull_checked'] = False
-    if 'auth_result' in st.session_state:
-        auth_kind, auth_message = st.session_state['auth_result']
-        getattr(st, auth_kind)(auth_message)
-    if st.button('Recupera aggiornamenti', icon=':material/cloud_download:', key='pull_github', width='stretch'):
-        if recover_updates():
-            st.rerun()
-    if 'pull_result' in st.session_state:
-        pull_kind, pull_message = st.session_state['pull_result']
-        getattr(st, pull_kind)(pull_message)
+    if CLOUD_DATA:
+        st.caption('Archivio condiviso')
+        st.success(f'GitHub connesso · branch {CLOUD_DATA["branch"]}')
+        st.caption('Ogni modifica viene salvata automaticamente. I pulsanti servono per forzare un recupero o ritentare dopo un errore di rete.')
+        pull_action, push_action = st.columns(2)
+        if pull_action.button('Recupera', icon=':material/cloud_download:', key='pull_github', width='stretch'):
+            if recover_updates():
+                st.rerun()
+        if push_action.button('Salva ora', icon=':material/cloud_upload:', key='sync_github', width='stretch'):
+            with st.spinner('Salvataggio archivio su GitHub…'):
+                try:
+                    _, result = push_cloud_archive(CLOUD_DATA, FILE)
+                except (SyncError, OSError) as exc:
+                    st.session_state['sync_result'] = ('error', str(exc))
+                else:
+                    st.session_state['sync_result'] = ('success', result)
+        if 'pull_result' in st.session_state:
+            pull_kind, pull_message = st.session_state['pull_result']
+            getattr(st, pull_kind)(pull_message)
+        if 'sync_result' in st.session_state:
+            kind, message = st.session_state['sync_result']
+            getattr(st, kind)(message)
+    else:
+        st.caption('Aggiornamenti GitHub')
+        st.caption('Controllo automatico all’apertura. Le modifiche locali bloccano il pull per proteggere i dati.')
+        st.caption('Il push è consentito solo agli account aggiunti come Collaborators della repository.')
+        login_windows, login_mac = st.columns(2)
+        login_system = None
+        if login_windows.button('GitHub · Windows', icon=':material/login:', key='login_github_windows',
+                                width='stretch', help='Accesso tramite Gestore credenziali di Windows.'):
+            login_system = 'windows'
+        if login_mac.button('GitHub · Mac', icon=':material/login:', key='login_github_macos',
+                            width='stretch', help='Accesso tramite Git Credential Manager e Portachiavi di macOS.'):
+            login_system = 'macos'
+        if login_system:
+            with st.spinner('Completa l’accesso nella finestra del browser…'):
+                try:
+                    auth_message = authenticate_github(system=login_system)
+                except (SyncError, OSError) as exc:
+                    st.session_state['auth_result'] = ('error', str(exc))
+                else:
+                    st.session_state['auth_result'] = ('success', auth_message)
+                    st.session_state['pull_checked'] = False
+        if 'auth_result' in st.session_state:
+            auth_kind, auth_message = st.session_state['auth_result']
+            getattr(st, auth_kind)(auth_message)
+        if st.button('Recupera aggiornamenti', icon=':material/cloud_download:', key='pull_github', width='stretch'):
+            if recover_updates():
+                st.rerun()
+        if 'pull_result' in st.session_state:
+            pull_kind, pull_message = st.session_state['pull_result']
+            getattr(st, pull_kind)(pull_message)
 
-    st.caption('Invia codice, configurazione e archivio Excel a GitHub con un commit e push. Le modifiche restano locali fino al clic.')
-    if st.button('Sincronizza con GitHub', icon=':material/cloud_upload:', key='sync_github', width='stretch'):
-        with st.spinner('Commit e invio a GitHub…'):
-            try:
-                result = sync_project()
-            except (SyncError, OSError) as exc:
-                st.session_state['sync_result'] = ('error', str(exc))
-            else:
-                st.session_state['sync_result'] = ('success', result)
-    if 'sync_result' in st.session_state:
-        kind, message = st.session_state['sync_result']
-        getattr(st, kind)(message)
+        st.caption('Invia codice, configurazione e archivio Excel a GitHub con un commit e push. Le modifiche restano locali fino al clic.')
+        if st.button('Sincronizza con GitHub', icon=':material/cloud_upload:', key='sync_github', width='stretch'):
+            with st.spinner('Commit e invio a GitHub…'):
+                try:
+                    result = sync_project()
+                except (SyncError, OSError) as exc:
+                    st.session_state['sync_result'] = ('error', str(exc))
+                else:
+                    st.session_state['sync_result'] = ('success', result)
+        if 'sync_result' in st.session_state:
+            kind, message = st.session_state['sync_result']
+            getattr(st, kind)(message)
 
 
 if st.session_state.pop('reset_print', False):
@@ -839,11 +883,19 @@ elif page == 'Pianificazione':
         except (KeyError, StopIteration, TypeError, ValueError, OSError) as exc:
             st.session_state['flash_error'] = f'Spostamento annullato: {exc}'
         else:
-            if moved_start is None:
+            cloud_error = None
+            if CLOUD_DATA:
+                try:
+                    push_cloud_archive(CLOUD_DATA, FILE)
+                except (SyncError, OSError) as exc:
+                    cloud_error = str(exc)
+            if cloud_error:
+                st.session_state['flash_error'] = f'Spostamento salvato sul server ma non ancora su GitHub: {cloud_error}'
+            elif moved_start is None:
                 st.session_state['flash'] = f'«{moved_plan["nome"]}» rimessa nella coda.'
             else:
                 verb = 'inserita' if moved_plan['inizio'] is None else 'spostata'
-                st.session_state['flash'] = f'«{moved_plan["nome"]}» {verb} al {moved_start.strftime("%d/%m/%Y alle %H:%M")}.'
+                st.session_state['flash'] = f'«{moved_plan["nome"]}» {verb} al {moved_start.strftime("%d/%m/%Y alle %H:%M")}. Archivio condiviso aggiornato.' if CLOUD_DATA else f'«{moved_plan["nome"]}» {verb} al {moved_start.strftime("%d/%m/%Y alle %H:%M")}.'
                 st.session_state['calendar_focus_date'] = moved_start.date()
         st.session_state['calendar_nonce'] = st.session_state.get('calendar_nonce', 0) + 1
         st.rerun()
